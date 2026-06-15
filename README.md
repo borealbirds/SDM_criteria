@@ -39,16 +39,29 @@ inputs and are no longer used by the app.
 
 The user selects:
 
-- an application category
+- an application category, or a specific application from the exhaustive
+  application list
 - a model type: `Prediction` or `Projection`
-- an application error severity tolerance: `High`, `Medium`, or `Low`
-- a criterion error certainty tolerance: `High`, `Medium`, or `Low`
+- an application error severity tolerance: `Correctness (high tolerance)`,
+  `Quality (medium tolerance)`, or `Efficiency (low tolerance)`
+- a criterion error certainty tolerance: `Always (high tolerance)`,
+  `Sometimes (medium tolerance)`, or `Rarely (low tolerance)`
+
+After changing these controls, click `Filter Criteria` to apply the selected
+scenario. The criteria, summaries, and report update from the last applied
+filter set rather than changing dynamically while dropdowns are being adjusted.
+
+The category and specific-application dropdowns stay synchronized: choosing a
+category filters the application list, and choosing a specific application sets
+the corresponding category. If no category is selected, the application dropdown
+shows the exhaustive application list. The `View Application Table` button opens
+the full application inventory for browsing.
 
 The selected application category and severity tolerance determine whether
 underprediction, overprediction, or both error types are relevant. For example,
-if underprediction has severity `High` and overprediction has severity `Low`,
-then a `Medium` severity tolerance considers underprediction but not
-overprediction.
+if underprediction has a `Correctness` effect and overprediction has an
+`Efficiency` effect, then a `Quality` severity tolerance considers
+underprediction but not overprediction.
 
 The selected model type determines which criterion certainty columns are used:
 
@@ -59,9 +72,9 @@ The selected model type determines which criterion certainty columns are used:
 
 The certainty tolerance then filters criteria using ordinal thresholds:
 
-- `High` includes criteria ranked `High`
-- `Medium` includes criteria ranked `High` or `Medium`
-- `Low` includes criteria ranked `High`, `Medium`, or `Low`
+- `Always` includes criteria ranked `High`
+- `Sometimes` includes criteria ranked `High` or `Medium`
+- `Rarely` includes criteria ranked `High`, `Medium`, or `Low`
 
 A criterion is selected when at least one active error type passes the criterion
 certainty threshold.

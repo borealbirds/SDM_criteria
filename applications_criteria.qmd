@@ -25,6 +25,8 @@ glossary <- read.csv("glossary_app.csv", stringsAsFactors = FALSE, check.names =
 
 MODEL_TYPES <- c("Prediction", "Projection")
 TOLERANCE_LEVELS <- c("High", "Medium", "Low")
+SEVERITY_TOLERANCE_CHOICES <- c("Correctness (high tolerance)" = "High", "Quality (medium tolerance)" = "Medium", "Efficiency (low tolerance)" = "Low")
+CERTAINTY_TOLERANCE_CHOICES <- c("Always (high tolerance)" = "High", "Sometimes (medium tolerance)" = "Medium", "Rarely (low tolerance)" = "Low")
 TOLERANCE_COLORS <- c("High" = "#ffb3b3", "Medium" = "#ffffcc", "Low" = "#c2f0c2")
 TOLERANCE_BORDER_COLORS <- c("High" = "#d32f2f", "Medium" = "#fbc02d", "Low" = "#388e3c")
 CERTAINTY_COLORS <- c(
@@ -126,6 +128,16 @@ application_categories <- application_categories %>%
     by = "Overprediction_error_effect"
   )
 
+APPLICATION_CATEGORY_CHOICES <- sort(unique(application_categories$Application_category))
+APPLICATION_CHOICES <- sort(unique(application_inventory$Application))
+DEFAULT_FILTERS <- list(
+  cat_select = "",
+  app_select = "",
+  type_select = "Prediction",
+  severity_tolerance = "Medium",
+  certainty_tolerance = "Medium"
+)
+
 read_landing_docx <- function(filepath) {
   if(!file.exists(filepath)) return(rep("", 20))
   doc <- read_docx(filepath)
@@ -178,23 +190,24 @@ ui <- fluidPage(
   
   sidebarLayout(
     sidebarPanel(
-      h4("1. Application Category"),
-      selectInput("cat_select", "Select application category:", choices = sort(unique(application_categories$Application_category))),
+      h4("1. Model Application"),
+      div(class = "risk-note", "Select a broad category to narrow the application list, or select a specific application directly from the full list. The two fields update each other."),
+      actionButton("view_applications", "View all applications as table", class = "btn-info w-100"),
+      selectInput("cat_select", "Select model application category:", choices = c("Select a category" = "", APPLICATION_CATEGORY_CHOICES), selected = ""),
+      selectInput("app_select", "Select model application:", choices = c("All applications in category" = "", APPLICATION_CHOICES), selected = ""),
       hr(),
-      textAreaInput("user_purpose", "Describe the purpose of your model application:", placeholder = "Enter your specific project goals here...", rows = 2),
-      actionButton("submit_purpose", "Submit Purpose", class = "btn-primary w-100"),
+      textAreaInput("user_purpose", "Add any further details about the biodiversity conservation application of your model to include in a report of model criteria.", placeholder = "Enter your specific project goals here...", rows = 2),
       hr(),
       h4("2. Model Type"),
+      div(class = "risk-note", "Select whether you are using your SDM for prediction or projection for the selected application."),
       selectInput("type_select", "Select model type:", choices = MODEL_TYPES, selected = "Prediction"),
       hr(),
-      h4("3. Error Severity Tolerance"),
-      selectInput("severity_tolerance", "Application error severity tolerance:", choices = TOLERANCE_LEVELS, selected = "Medium"),
-      div(class = "risk-note", "Determines whether underprediction, overprediction, or both are relevant for this application category."),
-      hr(),
-      h4("4. Error Certainty Tolerance"),
-      selectInput("certainty_tolerance", "Criteria error certainty tolerance:", choices = TOLERANCE_LEVELS, selected = "Medium"),
-      div(class = "risk-note", "Filters criteria by how consistently a violation leads to relevant errors."),
-      actionButton("reset_filters", "Reset Filters", class = "btn-secondary w-100")
+      h4("3. Error Tolerance"),
+      div(class = "risk-note", "Select how severe the potential effect of model error on the desired application must be before the relevant criterion is included."),
+      selectInput("severity_tolerance", "Select error severity tolerance:", choices = SEVERITY_TOLERANCE_CHOICES, selected = "Medium"),
+      div(class = "risk-note", "Select how consistently a criterion violation must lead to error before the criterion is included."),
+      selectInput("certainty_tolerance", "Select error certainty tolerance:", choices = CERTAINTY_TOLERANCE_CHOICES, selected = "Medium"),
+      actionButton("filter_criteria", "Filter Criteria", class = "btn-primary w-100")
     ),
     
     mainPanel(
@@ -253,6 +266,11 @@ server <- function(input, output, session) {
   
   selected_row_data <- reactiveVal(NULL)
   submitted_purpose <- reactiveVal("")
+  applied_filters <- reactiveVal(DEFAULT_FILTERS)
+
+  current_filters <- reactive({
+    applied_filters()
+  })
 
   rank_at_or_above <- function(rank_value, tolerance) {
     if (is.null(tolerance) || tolerance == "") return(TRUE)
@@ -266,25 +284,58 @@ server <- function(input, output, session) {
     paste(tolerance, "or higher")
   }
 
+  severity_tolerance_label <- function(tolerance) {
+    label <- names(SEVERITY_TOLERANCE_CHOICES)[match(tolerance, SEVERITY_TOLERANCE_CHOICES)]
+    ifelse(is.na(label), tolerance_label(tolerance), paste(label, "or higher"))
+  }
+
+  certainty_tolerance_label <- function(tolerance) {
+    label <- names(CERTAINTY_TOLERANCE_CHOICES)[match(tolerance, CERTAINTY_TOLERANCE_CHOICES)]
+    ifelse(is.na(label), tolerance_label(tolerance), paste(label, "or higher"))
+  }
+
   selected_category <- reactive({
-    req(input$cat_select)
+    filters <- current_filters()
+    category_name <- filters$cat_select
+    if ((is.null(category_name) || category_name == "") && !is.null(filters$app_select) && filters$app_select != "") {
+      app_row <- application_inventory %>%
+        filter(Application == filters$app_select) %>%
+        slice(1)
+      req(nrow(app_row) > 0)
+      category_name <- app_row$Application_category
+    }
+    req(category_name)
     category_row <- application_categories %>%
-      filter(Application_category == input$cat_select) %>%
+      filter(Application_category == category_name) %>%
       slice(1)
     req(nrow(category_row) > 0)
     category_row
   })
 
   selected_applications <- reactive({
-    req(input$cat_select)
+    filters <- current_filters()
+    if (is.null(filters$cat_select) || filters$cat_select == "") {
+      return(application_inventory %>% arrange(Application_category, Application))
+    }
     application_inventory %>%
-      filter(Application_category == input$cat_select) %>%
+      filter(Application_category == filters$cat_select) %>%
       arrange(Application)
   })
 
+  selected_application <- reactive({
+    filters <- current_filters()
+    if (is.null(filters$app_select) || filters$app_select == "") return(NULL)
+    app_row <- application_inventory %>%
+      filter(Application == filters$app_select) %>%
+      slice(1)
+    if (nrow(app_row) == 0) return(NULL)
+    app_row
+  })
+
   selected_certainty_columns <- reactive({
-    req(input$type_select)
-    model_prefix <- tolower(input$type_select)
+    filters <- current_filters()
+    req(filters$type_select)
+    model_prefix <- tolower(filters$type_select)
     c(
       underprediction = paste0("Underprediction_", model_prefix, "_error_certainty"),
       overprediction = paste0("Overprediction_", model_prefix, "_error_certainty")
@@ -293,7 +344,8 @@ server <- function(input, output, session) {
 
   active_error_types <- reactive({
     category_row <- selected_category()
-    severity_tol <- input$severity_tolerance
+    filters <- current_filters()
+    severity_tol <- filters$severity_tolerance
     active <- c()
     if (rank_at_or_above(category_row$Underprediction_error_severity_rank, severity_tol)) {
       active <- c(active, "Underprediction")
@@ -342,7 +394,8 @@ server <- function(input, output, session) {
     active <- active_error_types()
     if (length(active) == 0) return(criteria_with_framework_fields()[0, ])
 
-    certainty_tol <- input$certainty_tolerance
+    filters <- current_filters()
+    certainty_tol <- filters$certainty_tolerance
     criteria_with_framework_fields() %>%
       rowwise() %>%
       mutate(
@@ -388,32 +441,82 @@ server <- function(input, output, session) {
     HTML(processed_text)
   }
 
-  observeEvent(input$cat_select, {
-    selected_row_data(NULL)
-  })
-
-  observeEvent(input$type_select, {
-    selected_row_data(NULL)
-  })
-
-  observeEvent(input$severity_tolerance, {
-    selected_row_data(NULL)
-  })
-
-  observeEvent(input$certainty_tolerance, {
-    selected_row_data(NULL)
-  })
-
-  observeEvent(input$reset_filters, {
-    updateSelectInput(session, "type_select", selected = "Prediction")
-    updateSelectInput(session, "severity_tolerance", selected = "Medium")
-    updateSelectInput(session, "certainty_tolerance", selected = "Medium")
-    selected_row_data(NULL)
-  })
-
-  observeEvent(input$submit_purpose, {
+  observeEvent(input$filter_criteria, {
+    if ((is.null(input$cat_select) || input$cat_select == "") && (is.null(input$app_select) || input$app_select == "")) {
+      showNotification("Select an application category or a model application before filtering criteria.", type = "warning")
+      return()
+    }
+    category_to_apply <- input$cat_select
+    if ((is.null(category_to_apply) || category_to_apply == "") && !is.null(input$app_select) && input$app_select != "") {
+      app_row <- application_inventory %>%
+        filter(Application == input$app_select) %>%
+        slice(1)
+      if (nrow(app_row) > 0) category_to_apply <- app_row$Application_category
+    }
+    applied_filters(list(
+      cat_select = category_to_apply,
+      app_select = input$app_select,
+      type_select = input$type_select,
+      severity_tolerance = input$severity_tolerance,
+      certainty_tolerance = input$certainty_tolerance
+    ))
     submitted_purpose(input$user_purpose)
-    updateTextAreaInput(session, "user_purpose", value = "")
+    selected_row_data(NULL)
+  })
+
+  observeEvent(input$cat_select, {
+    choices_df <- application_inventory
+    if (!is.null(input$cat_select) && input$cat_select != "") {
+      choices_df <- choices_df %>% filter(Application_category == input$cat_select)
+    }
+    choices <- choices_df %>%
+      arrange(Application) %>%
+      pull(Application)
+    current_app <- isolate(input$app_select)
+    selected_app <- if (!is.null(current_app) && current_app %in% choices) current_app else ""
+    updateSelectInput(
+      session,
+      "app_select",
+      choices = c("All applications in category" = "", choices),
+      selected = selected_app
+    )
+  }, ignoreInit = FALSE)
+
+  observeEvent(input$app_select, {
+    if (is.null(input$app_select) || input$app_select == "") return()
+    app_row <- application_inventory %>%
+      filter(Application == input$app_select) %>%
+      slice(1)
+    if (nrow(app_row) == 0) return()
+    if (!identical(input$cat_select, app_row$Application_category)) {
+      updateSelectInput(session, "cat_select", selected = app_row$Application_category)
+    }
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$view_applications, {
+    showModal(modalDialog(
+      title = "Model Application Inventory",
+      div(style = "text-align: right; margin-bottom: 10px;", modalButton("Close")),
+      DTOutput("application_inventory_table"),
+      size = "l",
+      easyClose = TRUE,
+      footer = NULL
+    ))
+  })
+
+  output$application_inventory_table <- renderDT({
+    table_df <- application_inventory %>%
+      transmute(
+        `Application category` = Application_category,
+        Application,
+        Description
+      )
+    datatable(
+      table_df,
+      rownames = FALSE,
+      filter = "top",
+      options = list(pageLength = 10, scrollX = TRUE)
+    )
   })
 
   output$full_landing_page <- renderUI({
@@ -429,14 +532,21 @@ server <- function(input, output, session) {
   })
 
   output$selection_display_tab2 <- renderUI({
-    req(input$cat_select, input$type_select, input$severity_tolerance, input$certainty_tolerance)
+    filters <- current_filters()
+    req(filters$cat_select, filters$type_select, filters$severity_tolerance, filters$certainty_tolerance)
+    app_text <- if (is.null(filters$app_select) || filters$app_select == "") {
+      "all applications in category"
+    } else {
+      filters$app_select
+    }
     div(
       class = "selection-bar",
       paste0(
-        "You have selected: ", input$cat_select,
-        " + ", input$type_select,
-        " + severity tolerance: ", tolerance_label(input$severity_tolerance),
-        " + certainty tolerance: ", tolerance_label(input$certainty_tolerance)
+        "You have selected: ", filters$cat_select,
+        " (", app_text, ")",
+        " + ", filters$type_select,
+        " + severity tolerance: ", severity_tolerance_label(filters$severity_tolerance),
+        " + certainty tolerance: ", certainty_tolerance_label(filters$certainty_tolerance)
       )
     )
   })
@@ -444,12 +554,17 @@ server <- function(input, output, session) {
   output$app_profile_display <- renderUI({
     category_row <- selected_category()
     apps_for_category <- selected_applications()
+    selected_app <- selected_application()
     active <- active_error_types()
     tagList(
       div(class = "profile-box",
           h3(style = "color: #2c3e50; border-bottom: 2px solid #2c3e50;", category_row$Application_category),
           p(strong("Question: "), create_glossary_links(category_row$Question)),
           p(strong("Action: "), create_glossary_links(category_row$Action))),
+      if (!is.null(selected_app)) div(class = "profile-box profile-box-purpose",
+          h4(style = "color: #16a085; font-size: 1.1em;", "Selected Model Application"),
+          p(strong(selected_app$Application)),
+          p(create_glossary_links(selected_app$Description))),
       div(class = "profile-box profile-box-muted",
           h4(style = "color: #18bc9c;", "Application Error Effects"),
           p(strong("Underprediction: "), span(style = get_tolerance_style(category_row$Underprediction_error_severity_rank), category_row$Underprediction_error_severity_rank), " - ", category_row$Underprediction_error_effect),
@@ -470,13 +585,19 @@ server <- function(input, output, session) {
   output$selection_display_tab3 <- renderUI({
     category_row <- selected_category()
     active <- active_error_types()
+    filters <- current_filters()
+    app_text <- if (is.null(filters$app_select) || filters$app_select == "") {
+      "all applications in category"
+    } else {
+      filters$app_select
+    }
     tagList(
       h4(style = "color: #2c3e50; font-weight: bold; margin-bottom: 10px;", "Model Use Summary"),
       div(class = "selection-bar",
-          paste0("You have selected: ", input$cat_select, " + ", input$type_select),
+          paste0("You have selected: ", filters$cat_select, " (", app_text, ") + ", filters$type_select),
           div(style = "margin-top: 10px; font-weight: normal; font-size: 0.9em; border-top: 1px solid rgba(0,0,0,0.1); padding-top: 10px;",
-              strong("Severity tolerance: "), tolerance_label(input$severity_tolerance), br(),
-              strong("Certainty tolerance: "), tolerance_label(input$certainty_tolerance), br(),
+              strong("Severity tolerance: "), severity_tolerance_label(filters$severity_tolerance), br(),
+              strong("Certainty tolerance: "), certainty_tolerance_label(filters$certainty_tolerance), br(),
               strong("Underprediction severity: "), category_row$Underprediction_error_effect, " (", category_row$Underprediction_error_severity_rank, ")", br(),
               strong("Overprediction severity: "), category_row$Overprediction_error_effect, " (", category_row$Overprediction_error_severity_rank, ")", br(),
               strong("Error types considered: "), ifelse(length(active) == 0, "None", paste(active, collapse = ", "))
@@ -538,13 +659,14 @@ server <- function(input, output, session) {
   })
 
   output$criteria_count <- renderUI({
+    filters <- current_filters()
     filtered_count <- nrow(filtered_data())
     div(
       class = "criteria-count",
       paste0(
         "Showing ", filtered_count, " of ", nrow(criteria_df),
-        " criteria for ", input$type_select,
-        " models at ", tolerance_label(input$certainty_tolerance),
+        " criteria for ", filters$type_select,
+        " models at ", certainty_tolerance_label(filters$certainty_tolerance),
         " certainty."
       )
     )
@@ -617,13 +739,20 @@ server <- function(input, output, session) {
 
   output$report_tab_content <- renderUI({
     category_row <- selected_category()
+    filters <- current_filters()
+    app_text <- if (is.null(filters$app_select) || filters$app_select == "") {
+      "All applications in category"
+    } else {
+      filters$app_select
+    }
     tagList(
       div(class = "section-title", "Application Context"),
       div(class = "report-box",
-          h4(style="color: #2c3e50; margin-top:0;", paste("Category:", input$cat_select)),
-          p(strong("Selected Model Type: "), input$type_select),
-          p(strong("Severity Tolerance: "), tolerance_label(input$severity_tolerance)),
-          p(strong("Certainty Tolerance: "), tolerance_label(input$certainty_tolerance)),
+          h4(style="color: #2c3e50; margin-top:0;", paste("Category:", filters$cat_select)),
+          p(strong("Selected Application: "), app_text),
+          p(strong("Selected Model Type: "), filters$type_select),
+          p(strong("Severity Tolerance: "), severity_tolerance_label(filters$severity_tolerance)),
+          p(strong("Certainty Tolerance: "), certainty_tolerance_label(filters$certainty_tolerance)),
           p(strong("Underprediction Severity: "), category_row$Underprediction_error_effect, " (", category_row$Underprediction_error_severity_rank, ")"),
           p(strong("Overprediction Severity: "), category_row$Overprediction_error_effect, " (", category_row$Overprediction_error_severity_rank, ")"),
           p(strong("Team Overview: "), input$team_overview)),
@@ -652,6 +781,12 @@ server <- function(input, output, session) {
       category_row <- selected_category()
       report_data <- report_table_data()
       active <- active_error_types()
+      filters <- current_filters()
+      app_text <- if (is.null(filters$app_select) || filters$app_select == "") {
+        "All applications in category"
+      } else {
+        filters$app_select
+      }
 
       doc <- read_docx() %>% 
         body_add_par("SDM Application & Criteria Report", style = "heading 1") %>%
@@ -660,10 +795,11 @@ server <- function(input, output, session) {
         body_add_par("", style = "Normal") %>%
         
         body_add_par("1. Application Context", style = "heading 2") %>%
-        body_add_par(paste("Application Category:", input$cat_select), style = "Normal") %>%
-        body_add_par(paste("Selected Model Type:", input$type_select), style = "Normal") %>%
-        body_add_par(paste("Severity Tolerance:", tolerance_label(input$severity_tolerance)), style = "Normal") %>%
-        body_add_par(paste("Certainty Tolerance:", tolerance_label(input$certainty_tolerance)), style = "Normal") %>%
+        body_add_par(paste("Application Category:", filters$cat_select), style = "Normal") %>%
+        body_add_par(paste("Selected Application:", app_text), style = "Normal") %>%
+        body_add_par(paste("Selected Model Type:", filters$type_select), style = "Normal") %>%
+        body_add_par(paste("Severity Tolerance:", severity_tolerance_label(filters$severity_tolerance)), style = "Normal") %>%
+        body_add_par(paste("Certainty Tolerance:", certainty_tolerance_label(filters$certainty_tolerance)), style = "Normal") %>%
         body_add_par(paste("Error Types Considered:", ifelse(length(active) == 0, "None", paste(active, collapse = ", "))), style = "Normal") %>%
         body_add_par(paste("Underprediction Severity:", category_row$Underprediction_error_effect, "(", category_row$Underprediction_error_severity_rank, ")"), style = "Normal") %>%
         body_add_par(paste("Overprediction Severity:", category_row$Overprediction_error_effect, "(", category_row$Overprediction_error_severity_rank, ")"), style = "Normal") %>%
@@ -693,7 +829,8 @@ server <- function(input, output, session) {
   output$details_panel <- renderUI({
     res <- selected_row_data()
     if (is.null(res)) return(p(em("Click a criterion to view details.")))
-    justification <- if (identical(input$type_select, "Projection")) res$Projection_justification else res$Prediction_justification
+    filters <- current_filters()
+    justification <- if (identical(filters$type_select, "Projection")) res$Projection_justification else res$Prediction_justification
     tagList(
       p(strong("Criterion: "), res$Criterion),
       p(strong("Model Stage: "), res$Model_stage),
