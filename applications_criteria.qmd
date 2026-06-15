@@ -13,22 +13,26 @@ library(DT)
 library(purrr)
 library(plotly)
 library(stringr)
-library(officer) 
+library(officer)
 
 # --- 1. Load and Prepare Data ---
-apps <- read.csv("model_applications.csv", stringsAsFactors = FALSE, check.names = FALSE)
-criteria_df <- read.csv("model_criteria.csv", stringsAsFactors = FALSE, check.names = FALSE)
+application_inventory <- read.csv("Applications - Application_inventory.csv", stringsAsFactors = FALSE, check.names = FALSE)
+application_categories <- read.csv("Applications - Application_categories.csv", stringsAsFactors = FALSE, check.names = FALSE)
+application_error <- read.csv("Applications - Application_error.csv", stringsAsFactors = FALSE, check.names = FALSE)
+criteria_df <- read.csv("Criteria - Criteria.csv", stringsAsFactors = FALSE, check.names = FALSE)
+criteria_error <- read.csv("Criteria - Criteria_error.csv", stringsAsFactors = FALSE, check.names = FALSE)
 glossary <- read.csv("glossary_app.csv", stringsAsFactors = FALSE, check.names = FALSE)
 
-MODEL_TYPES <- c(
-  "Explanation (Hypothesis testing)",
-  "Predictions (spatially explicit)",
-  "Predictions (Non-spatially explicit)",
-  "Projection (Extrapolation)"
+MODEL_TYPES <- c("Prediction", "Projection")
+TOLERANCE_LEVELS <- c("High", "Medium", "Low")
+TOLERANCE_COLORS <- c("High" = "#ffb3b3", "Medium" = "#ffffcc", "Low" = "#c2f0c2")
+TOLERANCE_BORDER_COLORS <- c("High" = "#d32f2f", "Medium" = "#fbc02d", "Low" = "#388e3c")
+CERTAINTY_COLORS <- c(
+  "Always" = unname(TOLERANCE_COLORS["High"]),
+  "Sometimes" = unname(TOLERANCE_COLORS["Medium"]),
+  "Rarely" = unname(TOLERANCE_COLORS["Low"])
 )
-
-# Standardize model-type column names across input files.
-names(criteria_df)[names(criteria_df) == "Predictions (Spatially explicit)"] <- "Predictions (spatially explicit)"
+ERROR_TYPES <- c("Underprediction", "Overprediction")
 
 repair_mojibake <- function(x) {
   mojibake_pattern <- paste(c("\\u00c3", "\\u00c2", "\\u00e2"), collapse = "|")
@@ -57,31 +61,70 @@ validate_columns <- function(df, required_cols, file_label) {
 }
 
 validate_columns(
-  apps,
-  c(
-    "Model_application_category", "Definition", "Model_application_subcategory",
-    "Purpose_problem_to solve", "How_predictions_inform_decisions",
-    "Omission_errors", "Commission_errors", "What_practitioners_want",
-    "Reference_example", MODEL_TYPES
-  ),
-  "model_applications.csv"
+  application_inventory,
+  c("Application", "Application_category", "Description"),
+  "Applications - Application_inventory.csv"
+)
+
+validate_columns(
+  application_categories,
+  c("Application_category", "Question", "Action", "Underprediction_error_effect", "Overprediction_error_effect"),
+  "Applications - Application_categories.csv"
+)
+
+validate_columns(
+  application_error,
+  c("Error_effect", "Definition", "Error_effect_rank"),
+  "Applications - Application_error.csv"
 )
 
 validate_columns(
   criteria_df,
   c(
-    "Key_stages", "Criterion", "Assumption_Description",
-    "Violation_of_Assumptions", "Omission_errors", "Commission_errors",
-    "Potential_Solutions", "Author_reference", MODEL_TYPES
+    "Model_stage", "Model_step", "Criterion", "Description", "Violation",
+    "Underprediction_prediction_error_certainty",
+    "Overprediction_prediction_error_certainty",
+    "Prediction_justification",
+    "Underprediction_projection_error_certainty",
+    "Overprediction_projection_error_certainty",
+    "Projection_justification",
+    "Solutions"
   ),
-  "model_criteria.csv"
+  "Criteria - Criteria.csv"
+)
+
+validate_columns(
+  criteria_error,
+  c("Error_certainty", "Definition", "Error_certainty_rank"),
+  "Criteria - Criteria_error.csv"
 )
 
 validate_columns(glossary, c("Term", "Definition"), "glossary_app.csv")
 
-apps <- repair_text_columns(apps)
+application_inventory <- repair_text_columns(application_inventory)
+application_categories <- repair_text_columns(application_categories)
+application_error <- repair_text_columns(application_error)
 criteria_df <- repair_text_columns(criteria_df)
+criteria_error <- repair_text_columns(criteria_error)
 glossary <- repair_text_columns(glossary)
+
+application_categories <- application_categories %>%
+  left_join(
+    application_error %>% rename(
+      Underprediction_error_effect = Error_effect,
+      Underprediction_error_effect_definition = Definition,
+      Underprediction_error_severity_rank = Error_effect_rank
+    ),
+    by = "Underprediction_error_effect"
+  ) %>%
+  left_join(
+    application_error %>% rename(
+      Overprediction_error_effect = Error_effect,
+      Overprediction_error_effect_definition = Definition,
+      Overprediction_error_severity_rank = Error_effect_rank
+    ),
+    by = "Overprediction_error_effect"
+  )
 
 read_landing_docx <- function(filepath) {
   if(!file.exists(filepath)) return(rep("", 20))
@@ -89,23 +132,10 @@ read_landing_docx <- function(filepath) {
   content <- docx_summary(doc)
   text_lines <- content$text[content$content_type == "paragraph"]
   text_lines <- text_lines[text_lines != "" & !is.na(text_lines) & text_lines != "NA"]
-  return(repair_mojibake(text_lines))
+  repair_mojibake(text_lines)
 }
 
 landing_lines <- read_landing_docx("tab1_landing_page_intro.docx")
-
-clean_flags <- function(df) {
-  df %>% mutate(across(any_of(MODEL_TYPES), ~ {
-    val <- as.numeric(.)
-    ifelse(is.na(val), 0, val)
-  }))
-}
-apps <- clean_flags(apps)
-criteria_df <- clean_flags(criteria_df)
-
-RISK_LEVELS <- c("Very high", "High", "Moderate", "Low")
-RISK_COLORS <- c("Very high" = "#ff4d4d", "High" = "#ffb3b3", "Moderate" = "#ffffcc", "Low" = "#c2f0c2")
-RISK_BORDER_COLORS <- c("Very high" = "#d32f2f", "High" = "#f48fb1", "Moderate" = "#fbc02d", "Low" = "#388e3c")
 
 # --- 2. UI ---
 ui <- fluidPage(
@@ -115,18 +145,17 @@ ui <- fluidPage(
       .dataTables_wrapper { overflow-x: hidden !important; }
       .glossary-link { color: #2980b9; text-decoration: underline; cursor: pointer; font-weight: 600; }
       .glossary-link:hover { color: #1a5276; background-color: #ebf5fb; }
-      .guide-section { margin-bottom: 5px; padding: 2px 15px; border-left: 5px solid #2c3e50; }
+      .guide-section { margin-bottom: 6px; padding: 4px 15px; border-left: 5px solid #2c3e50; }
       .guide-section h4 { margin-top: 5px; margin-bottom: 2px; font-weight: bold; }
       .guide-section p, .guide-section ul { margin-bottom: 5px; }
       .centered-intro { text-align: center; margin-bottom: 10px; }
       .centered-intro h3 { margin-bottom: 2px; }
-      .centered-intro h4 { margin-top: 0px; margin-bottom: 10px; }
-      .selection-bar { background-color: #fff3cd; color: #856404; padding: 12px 20px; border: 1px solid #ffeeba; border-radius: 5px; margin-bottom: 15px; font-weight: 500; font-size: 1.1em; }
+      .selection-bar { background-color: #fff3cd; color: #856404; padding: 12px 20px; border: 1px solid #ffeeba; border-radius: 5px; margin-bottom: 15px; font-weight: 500; font-size: 1.05em; }
       .section-title { background-color: #2c3e50; color: white; padding: 10px 15px; border-radius: 5px; margin-bottom: 15px; font-size: 1.1em; font-weight: bold; }
       .custom-legend { text-align: center; margin-top: 5px; margin-bottom: 15px; padding: 8px; background: #f8f9fa; border-radius: 8px; border: 1px solid #ddd; }
       .legend-item { display: inline-block; margin: 0 12px; font-size: 0.8em; font-weight: bold; }
       .legend-box { display: inline-block; width: 10px; height: 10px; margin-right: 5px; border: 1px solid #666; vertical-align: middle; }
-      .report-box { border: 1px solid #dee2e6; padding: 20px; border-radius: 10px; background-color: #ffffff; margin-bottom: 20px; }
+      .report-box { border: 1px solid #dee2e6; padding: 20px; border-radius: 8px; background-color: #ffffff; margin-bottom: 20px; }
       .profile-box { border: 1px solid #dee2e6; padding: 15px; border-radius: 8px; background-color: #ffffff; margin-bottom: 15px; }
       .profile-box-muted { background-color: #f8f9fa; }
       .profile-box-info { background-color: #e8f4f8; }
@@ -139,8 +168,6 @@ ui <- fluidPage(
       .criteria-count { margin-bottom: 12px; color: #2c3e50; font-weight: 600; }
       .risk-note { font-size: 0.85em; color: #555; margin-top: -4px; margin-bottom: 8px; }
       .report-actions { display: flex; gap: 10px; flex-wrap: wrap; }
-      
-      /* NEW CSS TO REDUCE SIDEBAR SPACING */
       .well .form-group { margin-bottom: 8px !important; }
       .well hr { margin-top: 10px !important; margin-bottom: 10px !important; }
       .well h4 { margin-bottom: 5px !important; font-size: 1.1em; }
@@ -151,26 +178,22 @@ ui <- fluidPage(
   
   sidebarLayout(
     sidebarPanel(
-      h4("1. Model Application Context"),
-      selectInput("cat_select", "Select Application Category:", choices = sort(unique(apps$Model_application_category))),
-      uiOutput("subcat_ui"),
+      h4("1. Application Category"),
+      selectInput("cat_select", "Select application category:", choices = sort(unique(application_categories$Application_category))),
       hr(),
-      # REDUCED HEIGHT BOX HERE
       textAreaInput("user_purpose", "Describe the purpose of your model application:", placeholder = "Enter your specific project goals here...", rows = 2),
       actionButton("submit_purpose", "Submit Purpose", class = "btn-primary w-100"),
       hr(),
       h4("2. Model Type"),
-      selectInput("type_select", "Select the general purpose(s):",
-                  choices = MODEL_TYPES, 
-                  selected = NULL, multiple = TRUE),
+      selectInput("type_select", "Select model type:", choices = MODEL_TYPES, selected = "Prediction"),
       hr(),
-      h4("3. Model Performance & Risk"),
-      selectInput("omission_filter", "Omission Error:", choices = c("None" = "", RISK_LEVELS), selected = ""),
-      selectInput("commission_filter", "Commission Error:", choices = c("None" = "", RISK_LEVELS), selected = ""),
-      selectInput("risk_match_mode", "When both risks are selected:",
-                  choices = c("Match either risk" = "any", "Match both risks" = "all"),
-                  selected = "any"),
-      div(class = "risk-note", "Risk filters are thresholds: selecting Moderate includes Moderate, High, and Very high criteria."),
+      h4("3. Error Severity Tolerance"),
+      selectInput("severity_tolerance", "Application error severity tolerance:", choices = TOLERANCE_LEVELS, selected = "Medium"),
+      div(class = "risk-note", "Determines whether underprediction, overprediction, or both are relevant for this application category."),
+      hr(),
+      h4("4. Error Certainty Tolerance"),
+      selectInput("certainty_tolerance", "Criteria error certainty tolerance:", choices = TOLERANCE_LEVELS, selected = "Medium"),
+      div(class = "risk-note", "Filters criteria by how consistently a violation leads to relevant errors."),
       actionButton("reset_filters", "Reset Filters", class = "btn-secondary w-100")
     ),
     
@@ -186,14 +209,13 @@ ui <- fluidPage(
                    column(8, 
                           div(class = "section-title", "Summary of criteria along the model cycle"),
                           fluidRow(
-                            column(6, div(class = "plot-box", h6(class = "plot-title", "Omission Counts"), plotlyOutput("radar_omission", height = "280px"))),
-                            column(6, div(class = "plot-box", h6(class = "plot-title", "Commission Counts"), plotlyOutput("radar_commission", height = "280px")))
+                            column(6, div(class = "plot-box", h6(class = "plot-title", "Underprediction Criteria"), plotlyOutput("radar_underprediction", height = "280px"))),
+                            column(6, div(class = "plot-box", h6(class = "plot-title", "Overprediction Criteria"), plotlyOutput("radar_overprediction", height = "280px")))
                           ),
                           div(class = "custom-legend",
-                              div(class="legend-item", span(class="legend-box", style=paste0("background:", RISK_COLORS["Very high"])), "Very high"),
-                              div(class="legend-item", span(class="legend-box", style=paste0("background:", RISK_COLORS["High"])), "High"),
-                              div(class="legend-item", span(class="legend-box", style=paste0("background:", RISK_COLORS["Moderate"])), "Moderate"),
-                              div(class="legend-item", span(class="legend-box", style=paste0("background:", RISK_COLORS["Low"])), "Low")
+                              div(class="legend-item", span(class="legend-box", style=paste0("background:", TOLERANCE_COLORS["High"])), "High"),
+                              div(class="legend-item", span(class="legend-box", style=paste0("background:", TOLERANCE_COLORS["Medium"])), "Medium"),
+                              div(class="legend-item", span(class="legend-box", style=paste0("background:", TOLERANCE_COLORS["Low"])), "Low")
                           ),
                           hr(),
                           div(class = "section-title", "List of criteria (click on any row to display details)"),
@@ -232,35 +254,114 @@ server <- function(input, output, session) {
   selected_row_data <- reactiveVal(NULL)
   submitted_purpose <- reactiveVal("")
 
-  selected_app <- reactive({
-    req(input$cat_select, input$subcat_select)
-    app_row <- apps %>%
-      filter(
-        Model_application_category == input$cat_select,
-        Model_application_subcategory == input$subcat_select
-      ) %>%
-      slice(1)
-    req(nrow(app_row) > 0)
-    app_row
-  })
-
-  selected_model_types <- reactive({
-    if (is.null(input$type_select) || length(input$type_select) == 0) {
-      "None selected"
-    } else {
-      paste(input$type_select, collapse = ", ")
-    }
-  })
-
-  apply_suggested_risks <- function() {
-    app_row <- selected_app()
-    updateSelectInput(session, "omission_filter", selected = app_row$Omission_errors)
-    updateSelectInput(session, "commission_filter", selected = app_row$Commission_errors)
-    updateSelectInput(session, "risk_match_mode", selected = "any")
+  rank_at_or_above <- function(rank_value, tolerance) {
+    if (is.null(tolerance) || tolerance == "") return(TRUE)
+    value_rank <- match(rank_value, TOLERANCE_LEVELS)
+    tolerance_rank <- match(tolerance, TOLERANCE_LEVELS)
+    !is.na(value_rank) & !is.na(tolerance_rank) & value_rank <= tolerance_rank
   }
 
-  get_risk_style <- function(level) {
-    color <- RISK_COLORS[level]
+  tolerance_label <- function(tolerance) {
+    if (is.null(tolerance) || tolerance == "") return("No tolerance selected")
+    paste(tolerance, "or higher")
+  }
+
+  selected_category <- reactive({
+    req(input$cat_select)
+    category_row <- application_categories %>%
+      filter(Application_category == input$cat_select) %>%
+      slice(1)
+    req(nrow(category_row) > 0)
+    category_row
+  })
+
+  selected_applications <- reactive({
+    req(input$cat_select)
+    application_inventory %>%
+      filter(Application_category == input$cat_select) %>%
+      arrange(Application)
+  })
+
+  selected_certainty_columns <- reactive({
+    req(input$type_select)
+    model_prefix <- tolower(input$type_select)
+    c(
+      underprediction = paste0("Underprediction_", model_prefix, "_error_certainty"),
+      overprediction = paste0("Overprediction_", model_prefix, "_error_certainty")
+    )
+  })
+
+  active_error_types <- reactive({
+    category_row <- selected_category()
+    severity_tol <- input$severity_tolerance
+    active <- c()
+    if (rank_at_or_above(category_row$Underprediction_error_severity_rank, severity_tol)) {
+      active <- c(active, "Underprediction")
+    }
+    if (rank_at_or_above(category_row$Overprediction_error_severity_rank, severity_tol)) {
+      active <- c(active, "Overprediction")
+    }
+    active
+  })
+
+  criteria_with_framework_fields <- reactive({
+    cols <- selected_certainty_columns()
+    criteria_df %>%
+      mutate(
+        Underprediction_certainty = .data[[cols[["underprediction"]]]],
+        Overprediction_certainty = .data[[cols[["overprediction"]]]]
+      ) %>%
+      left_join(
+        criteria_error %>%
+          rename(
+            Underprediction_certainty = Error_certainty,
+            Underprediction_certainty_definition = Definition,
+            Underprediction_certainty_rank = Error_certainty_rank
+          ),
+        by = "Underprediction_certainty"
+      ) %>%
+      left_join(
+        criteria_error %>%
+          rename(
+            Overprediction_certainty = Error_certainty,
+            Overprediction_certainty_definition = Definition,
+            Overprediction_certainty_rank = Error_certainty_rank
+          ),
+        by = "Overprediction_certainty"
+      )
+  })
+
+  criterion_match_reason <- function(under_match, over_match) {
+    if (under_match && over_match) return("Matched underprediction and overprediction")
+    if (under_match) return("Matched underprediction")
+    if (over_match) return("Matched overprediction")
+    "Not selected"
+  }
+
+  filtered_data <- reactive({
+    active <- active_error_types()
+    if (length(active) == 0) return(criteria_with_framework_fields()[0, ])
+
+    certainty_tol <- input$certainty_tolerance
+    criteria_with_framework_fields() %>%
+      rowwise() %>%
+      mutate(
+        Underprediction_selected = "Underprediction" %in% active &&
+          rank_at_or_above(Underprediction_certainty_rank, certainty_tol),
+        Overprediction_selected = "Overprediction" %in% active &&
+          rank_at_or_above(Overprediction_certainty_rank, certainty_tol),
+        Match_reason = criterion_match_reason(Underprediction_selected, Overprediction_selected)
+      ) %>%
+      ungroup() %>%
+      filter(Underprediction_selected | Overprediction_selected)
+  })
+
+  display_certainty <- function(value, selected) {
+    if (isTRUE(selected)) value else ""
+  }
+
+  get_tolerance_style <- function(level) {
+    color <- TOLERANCE_COLORS[level]
     if(is.na(color)) color <- "#ffffff"
     paste0(
       "background-color: ", color,
@@ -268,88 +369,6 @@ server <- function(input, output, session) {
       " border: 1px solid rgba(0,0,0,0.1); color: #333;"
     )
   }
-
-  display_risk_value <- function(value, selected_filter) {
-    if (is.null(selected_filter)) return(value)
-    if (selected_filter == "" || risk_at_or_above(value, selected_filter)) value else ""
-  }
-
-  risk_at_or_above <- function(value, selected_filter) {
-    if (is.null(selected_filter) || selected_filter == "") return(TRUE)
-    value_rank <- match(value, RISK_LEVELS)
-    selected_rank <- match(selected_filter, RISK_LEVELS)
-    !is.na(value_rank) & !is.na(selected_rank) & value_rank <= selected_rank
-  }
-
-  risk_threshold_label <- function(selected_filter) {
-    if (is.null(selected_filter) || selected_filter == "") return("No risk filter")
-    paste(selected_filter, "or higher")
-  }
-
-  match_reason <- function(omission_value, commission_value) {
-    om_val <- input$omission_filter
-    com_val <- input$commission_filter
-    if (is.null(om_val)) om_val <- ""
-    if (is.null(com_val)) com_val <- ""
-    if (om_val == "" && com_val == "") return("Included by selected model type")
-    om_match <- om_val != "" && risk_at_or_above(omission_value, om_val)
-    com_match <- com_val != "" && risk_at_or_above(commission_value, com_val)
-    if (om_match && com_match) return("Matched omission and commission risk thresholds")
-    if (om_match) return("Matched omission risk threshold")
-    if (com_match) return("Matched commission risk threshold")
-    "Included"
-  }
-
-  add_match_reason <- function(df) {
-    if (nrow(df) == 0) return(df)
-    df %>%
-      rowwise() %>%
-      mutate(Match_reason = match_reason(Omission_errors, Commission_errors)) %>%
-      ungroup()
-  }
-
-  risk_summary_table <- function(df, error_col, selected_level) {
-    stages <- sort(unique(criteria_df$Key_stages))
-    stages <- stages[stages != "" & !is.na(stages)]
-    if (is.null(selected_level) || selected_level == "") {
-      return(data.frame(Key_stages = stages, Risk_level = "None selected", Count = 0))
-    }
-    counts <- df %>%
-      filter(risk_at_or_above(!!sym(error_col), selected_level)) %>%
-      count(Key_stages, name = "Count")
-    data.frame(Key_stages = stages) %>%
-      left_join(counts, by = "Key_stages") %>%
-      mutate(
-        Risk_level = risk_threshold_label(selected_level),
-        Count = ifelse(is.na(Count), 0, Count)
-      ) %>%
-      select(Key_stages, Risk_level, Count)
-  }
-
-  observeEvent(input$cat_select, {
-    updateSelectInput(session, "type_select", selected = character(0))
-    updateSelectInput(session, "omission_filter", selected = "")
-    updateSelectInput(session, "commission_filter", selected = "")
-    updateSelectInput(session, "risk_match_mode", selected = "any")
-    selected_row_data(NULL)
-  })
-
-  observeEvent(input$subcat_select, {
-    updateSelectInput(session, "type_select", selected = character(0))
-    apply_suggested_risks()
-    selected_row_data(NULL)
-  })
-
-  observeEvent(input$reset_filters, {
-    updateSelectInput(session, "type_select", selected = character(0))
-    apply_suggested_risks()
-    selected_row_data(NULL)
-  })
-
-  observeEvent(input$submit_purpose, {
-    submitted_purpose(input$user_purpose)
-    updateTextAreaInput(session, "user_purpose", value = "")
-  })
 
   create_glossary_links <- function(text) {
     if (is.null(text) || text == "" || is.na(text) || text == "NA") return("")
@@ -366,145 +385,134 @@ server <- function(input, output, session) {
         processed_text <- str_replace(processed_text, pattern, replacement)
       }
     }
-    return(HTML(processed_text))
+    HTML(processed_text)
   }
+
+  observeEvent(input$cat_select, {
+    selected_row_data(NULL)
+  })
+
+  observeEvent(input$type_select, {
+    selected_row_data(NULL)
+  })
+
+  observeEvent(input$severity_tolerance, {
+    selected_row_data(NULL)
+  })
+
+  observeEvent(input$certainty_tolerance, {
+    selected_row_data(NULL)
+  })
+
+  observeEvent(input$reset_filters, {
+    updateSelectInput(session, "type_select", selected = "Prediction")
+    updateSelectInput(session, "severity_tolerance", selected = "Medium")
+    updateSelectInput(session, "certainty_tolerance", selected = "Medium")
+    selected_row_data(NULL)
+  })
+
+  observeEvent(input$submit_purpose, {
+    submitted_purpose(input$user_purpose)
+    updateTextAreaInput(session, "user_purpose", value = "")
+  })
 
   output$full_landing_page <- renderUI({
     req(landing_lines)
-    idx_goal <- which(str_detect(landing_lines, "^Goal$"))[1]
-    idx_motivation <- which(str_detect(landing_lines, "^Motivation$"))[1]
-    idx_approach <- which(str_detect(landing_lines, "^Approach$"))[1]
-    idx_proceed <- which(str_detect(landing_lines, "How to proceed\\?"))[1]
-    format_dynamic_line <- function(line) {
-      if(str_detect(line, "^[0-9]+\\.")) {
-        parts <- str_split(line, " : ", n = 2)[[1]]
-        if(length(parts) > 1) tags$p(style="margin-bottom: 2px;", tags$strong(paste0(parts[1], ":")), create_glossary_links(parts[2])) 
-        else tags$p(style="margin-bottom: 2px;", tags$strong(line))
-      } else tags$p(style="margin-bottom: 2px;", create_glossary_links(line))
-    }
-    tagList(
-      div(class = "centered-intro", h3(landing_lines[1]), h4(style = "color: #2c3e50; font-weight: bold;", landing_lines[2])),
-      div(class="guide-section", h4(style="color: #18bc9c;", landing_lines[idx_goal]), p(create_glossary_links(paste(landing_lines[(idx_goal+1):(idx_motivation-1)], collapse = " ")))),
-      div(class="guide-section", h4(style="color: #2980b9;", landing_lines[idx_motivation]), tags$ul(style="padding-left: 20px;", lapply(landing_lines[(idx_motivation+1):(idx_approach-1)], function(line) { if(!str_detect(line, "\\?")) tags$li(create_glossary_links(line)) else tags$p(style="margin-left: -20px; font-weight: bold;", create_glossary_links(line)) }))),
-      div(class="guide-section", h4(style="color: #e67e22;", landing_lines[idx_approach]), p(create_glossary_links(paste(landing_lines[(idx_approach+1):(idx_proceed-1)], collapse = " ")))),
-      div(class="guide-section", h4(style="color: #e74c3c;", landing_lines[idx_proceed]), lapply(landing_lines[(idx_proceed + 1):length(landing_lines)], format_dynamic_line))
-    )
-  })
-
-  base_filtered <- reactive({
-    df <- criteria_df
-    if (!is.null(input$type_select) && length(input$type_select) > 0) {
-      valid_cols <- intersect(input$type_select, names(df))
-      if(length(valid_cols) > 0) {
-        mask <- rowSums(df[valid_cols] == 1, na.rm = TRUE) > 0
-        df <- df[mask, ]
+    format_line <- function(line, idx) {
+      if (idx == 1) return(div(class = "centered-intro", h3(create_glossary_links(line))))
+      if (line %in% c("Overview", "Instructions") || str_detect(line, "^Step [A-Z]")) {
+        return(div(class = "guide-section", h4(create_glossary_links(line))))
       }
+      tags$p(create_glossary_links(line))
     }
-    df
-  })
-  
-  filtered_data <- reactive({
-    df <- base_filtered()
-    om_val <- input$omission_filter
-    com_val <- input$commission_filter
-    if (is.null(om_val)) om_val <- ""
-    if (is.null(com_val)) com_val <- ""
-    if (om_val == "" && com_val == "") return(df)
-    
-    if (om_val != "" && com_val != "") {
-      if (identical(input$risk_match_mode, "all")) {
-        df <- df %>%
-          filter(
-            risk_at_or_above(Omission_errors, om_val) &
-              risk_at_or_above(Commission_errors, com_val)
-          )
-      } else {
-        df <- df %>%
-          filter(
-            risk_at_or_above(Omission_errors, om_val) |
-              risk_at_or_above(Commission_errors, com_val)
-          )
-      }
-    } else if (om_val != "") {
-      df <- df %>% filter(risk_at_or_above(Omission_errors, om_val))
-    } else {
-      df <- df %>% filter(risk_at_or_above(Commission_errors, com_val))
-    }
-    df
+    tagList(map2(landing_lines, seq_along(landing_lines), format_line))
   })
 
   output$selection_display_tab2 <- renderUI({
-    req(input$cat_select, input$subcat_select)
-    div(class = "selection-bar", paste0("You have selected: ", input$cat_select, " (", input$subcat_select, ") + ", selected_model_types()))
+    req(input$cat_select, input$type_select, input$severity_tolerance, input$certainty_tolerance)
+    div(
+      class = "selection-bar",
+      paste0(
+        "You have selected: ", input$cat_select,
+        " + ", input$type_select,
+        " + severity tolerance: ", tolerance_label(input$severity_tolerance),
+        " + certainty tolerance: ", tolerance_label(input$certainty_tolerance)
+      )
+    )
   })
 
   output$app_profile_display <- renderUI({
-    req(input$cat_select, input$subcat_select)
-    row <- selected_app()
-    type_defs <- if (!is.null(input$type_select) && length(input$type_select) > 0) {
-      lapply(input$type_select, function(t) {
-        def_row <- glossary %>% filter(Term == t); if(nrow(def_row) > 0) {
-          div(style = "margin-bottom: 10px;", tags$strong(t, ": "), create_glossary_links(def_row$Definition))
-        } else NULL
-      })
-    } else ""
+    category_row <- selected_category()
+    apps_for_category <- selected_applications()
+    active <- active_error_types()
     tagList(
-      div(class = "profile-box", 
-          h3(style = "color: #2c3e50; border-bottom: 2px solid #2c3e50;", row$Model_application_category), p(em(create_glossary_links(row$Definition)))),
-      div(class = "profile-box profile-box-muted", 
-          h4(style = "color: #18bc9c;", row$Model_application_subcategory), hr(), 
-          p(strong("Purpose: "), create_glossary_links(row[["Purpose_problem_to solve"]])), 
-          p(strong("Decision Impact: "), create_glossary_links(row$How_predictions_inform_decisions)), 
-          p(strong("Reference Example: "), HTML(as.character(row$Reference_example)))),
-      if (length(input$type_select) > 0) div(class = "profile-box profile-box-info", 
-                                             h4(style = "color: #2980b9; font-size: 1.1em;", "Selected Model Types:"), type_defs),
+      div(class = "profile-box",
+          h3(style = "color: #2c3e50; border-bottom: 2px solid #2c3e50;", category_row$Application_category),
+          p(strong("Question: "), create_glossary_links(category_row$Question)),
+          p(strong("Action: "), create_glossary_links(category_row$Action))),
+      div(class = "profile-box profile-box-muted",
+          h4(style = "color: #18bc9c;", "Application Error Effects"),
+          p(strong("Underprediction: "), span(style = get_tolerance_style(category_row$Underprediction_error_severity_rank), category_row$Underprediction_error_severity_rank), " - ", category_row$Underprediction_error_effect),
+          p(create_glossary_links(category_row$Underprediction_error_effect_definition)),
+          p(strong("Overprediction: "), span(style = get_tolerance_style(category_row$Overprediction_error_severity_rank), category_row$Overprediction_error_severity_rank), " - ", category_row$Overprediction_error_effect),
+          p(create_glossary_links(category_row$Overprediction_error_effect_definition)),
+          p(strong("Error types considered: "), ifelse(length(active) == 0, "None at this severity tolerance", paste(active, collapse = ", ")))),
+      div(class = "profile-box profile-box-info",
+          h4(style = "color: #2980b9; font-size: 1.1em;", "Applications in this category"),
+          tags$ul(lapply(seq_len(nrow(apps_for_category)), function(i) {
+            tags$li(tags$strong(apps_for_category$Application[i]), ": ", create_glossary_links(apps_for_category$Description[i]))
+          }))),
       if (submitted_purpose() != "") div(class = "profile-box profile-box-purpose",
                                          h4(style = "color: #16a085; font-size: 1.1em;", "My specific application purpose:"), p(style = "font-style: italic;", submitted_purpose()))
     )
   })
 
   output$selection_display_tab3 <- renderUI({
-    req(input$cat_select, input$subcat_select)
-    app_row <- selected_app()
-    needs_split <- unlist(strsplit(app_row$What_practitioners_want, ",(?=[^,]*$|\\s*['\"])", perl = TRUE)) 
-    risk_mode_text <- if (identical(input$risk_match_mode, "all")) "both selected risk thresholds" else "either selected risk threshold"
+    category_row <- selected_category()
+    active <- active_error_types()
     tagList(
-      h4(style = "color: #2c3e50; font-weight: bold; margin-bottom: 10px;", "Model Application Summary"),
-      div(class = "selection-bar", paste0("You have selected: ", input$cat_select, " (", input$subcat_select, ") + ", selected_model_types()),
+      h4(style = "color: #2c3e50; font-weight: bold; margin-bottom: 10px;", "Model Use Summary"),
+      div(class = "selection-bar",
+          paste0("You have selected: ", input$cat_select, " + ", input$type_select),
           div(style = "margin-top: 10px; font-weight: normal; font-size: 0.9em; border-top: 1px solid rgba(0,0,0,0.1); padding-top: 10px;",
-              strong("Suggested Risk for selection:"), br(),
-              span(style = "margin-left: 10px;", "Omission: ", span(style = get_risk_style(app_row$Omission_errors), app_row$Omission_errors)),
-              span(style = "margin-left: 20px;", "Commission: ", span(style = get_risk_style(app_row$Commission_errors), app_row$Commission_errors)),
-              br(), br(), strong("Active filter rule: "), paste("Criteria match", risk_mode_text, "or anything higher when both omission and commission risks are selected."),
-              br(), br(), strong("Practitioner Needs:"),
-              tags$ul(style = "margin-top: 5px; margin-bottom: 0;", lapply(needs_split, function(n) tags$li(create_glossary_links(trimws(n)))))
+              strong("Severity tolerance: "), tolerance_label(input$severity_tolerance), br(),
+              strong("Certainty tolerance: "), tolerance_label(input$certainty_tolerance), br(),
+              strong("Underprediction severity: "), category_row$Underprediction_error_effect, " (", category_row$Underprediction_error_severity_rank, ")", br(),
+              strong("Overprediction severity: "), category_row$Overprediction_error_effect, " (", category_row$Overprediction_error_severity_rank, ")", br(),
+              strong("Error types considered: "), ifelse(length(active) == 0, "None", paste(active, collapse = ", "))
           )
       ),
-      h4(style = "color: #2c3e50; font-weight: bold; margin-top: 20px; border-bottom: 2px solid #18bc9c; padding-bottom: 5px;", "Criteria selected based on your risk tolerance")
+      h4(style = "color: #2c3e50; font-weight: bold; margin-top: 20px; border-bottom: 2px solid #18bc9c; padding-bottom: 5px;", "Criteria selected based on application severity and criterion certainty")
     )
   })
 
-  render_radar_logic <- function(df_base, error_col, filter_input) {
-    stages <- sort(unique(criteria_df$Key_stages)); stages <- stages[stages != "" & !is.na(stages)]
-    p <- plot_ly(type = 'scatterpolar', fill = 'toself')
-    lvl <- filter_input
-    max_range <- 10
-    if (lvl != "") {
-        counts <- df_base %>% filter(risk_at_or_above(!!sym(error_col), lvl)) %>% group_by(Key_stages) %>% summarise(n = n(), .groups = 'drop')
-        plot_df <- data.frame(Key_stages = stages) %>% left_join(counts, by = "Key_stages") %>% mutate(n = ifelse(is.na(n), 0, n))
-        max_range <- max(10, ceiling(max(plot_df$n, na.rm = TRUE) / 5) * 5)
-        display_labels <- gsub("Data quality, relevance and preparation", "Data sets", plot_df$Key_stages)
-        display_labels <- gsub(" ", "<br>", display_labels)
-        p <- p %>% add_trace(r = c(plot_df$n, plot_df$n[1]), theta = c(display_labels, display_labels[1]), 
-                             name = risk_threshold_label(lvl), fillcolor = RISK_COLORS[lvl], line = list(color = RISK_BORDER_COLORS[lvl], width = 2), opacity = 0.5)
+  render_stage_plot <- function(error_type) {
+    active <- active_error_types()
+    if (!(error_type %in% active)) {
+      return(render_empty_plot(paste(error_type, "is not considered at this severity tolerance")))
     }
-    p %>% layout(margin = list(l = 60, r = 60, t = 10, b = 10),
-      polar = list(domain = list(x = c(0.1, 0.9), y = c(0.05, 0.95)), 
-        radialaxis = list(visible = TRUE, range = c(0, max_range), angle = 0, tickangle = 0, tickfont = list(size = 9))), 
-      showlegend = FALSE)
+    selected_flag <- paste0(error_type, "_selected")
+    data <- filtered_data() %>%
+      filter(.data[[selected_flag]]) %>%
+      count(Model_stage, name = "n")
+    if (nrow(data) == 0) {
+      return(render_empty_plot(paste("No", tolower(error_type), "criteria selected")))
+    }
+    plot_ly(
+      data,
+      x = ~Model_stage,
+      y = ~n,
+      type = "bar",
+      marker = list(color = "#18bc9c")
+    ) %>%
+      layout(
+        xaxis = list(title = "", tickangle = -25),
+        yaxis = list(title = "Criteria"),
+        margin = list(l = 40, r = 20, t = 10, b = 90)
+      )
   }
 
-  render_empty_radar <- function(message) {
+  render_empty_plot <- function(message) {
     plot_ly() %>%
       layout(
         xaxis = list(visible = FALSE),
@@ -521,24 +529,23 @@ server <- function(input, output, session) {
       )
   }
 
-  output$radar_omission <- renderPlotly({
-    if (is.null(input$omission_filter) || input$omission_filter == "") return(render_empty_radar("Select an omission risk level"))
-    render_radar_logic(base_filtered(), "Omission_errors", input$omission_filter)
+  output$radar_underprediction <- renderPlotly({
+    render_stage_plot("Underprediction")
   })
-  output$radar_commission <- renderPlotly({
-    if (is.null(input$commission_filter) || input$commission_filter == "") return(render_empty_radar("Select a commission risk level"))
-    render_radar_logic(base_filtered(), "Commission_errors", input$commission_filter)
+
+  output$radar_overprediction <- renderPlotly({
+    render_stage_plot("Overprediction")
   })
 
   output$criteria_count <- renderUI({
-    all_count <- nrow(criteria_df)
-    type_count <- nrow(base_filtered())
     filtered_count <- nrow(filtered_data())
     div(
       class = "criteria-count",
       paste0(
-        "Showing ", filtered_count, " of ", all_count,
-        " criteria (", type_count, " match the selected model type filter)."
+        "Showing ", filtered_count, " of ", nrow(criteria_df),
+        " criteria for ", input$type_select,
+        " models at ", tolerance_label(input$certainty_tolerance),
+        " certainty."
       )
     )
   })
@@ -546,106 +553,105 @@ server <- function(input, output, session) {
   output$criteria_tables_ui <- renderUI({
     data <- filtered_data()
     if(nrow(data) == 0) {
-      return(div(class = "empty-state", "No criteria match this combination. Try selecting another model type, changing the risk level, or switching the risk filter rule."))
+      return(div(class = "empty-state", "No criteria match this combination. Try lowering the severity or certainty tolerance, or selecting another model type."))
     }
-    stages <- unique(data$Key_stages)
-    map(stages, function(s) { tagList(h5(style="margin-top:15px; border-bottom: 1px solid #ccc; font-weight:bold; font-size: 0.9em;", s), DTOutput(paste0("table_", gsub("[^[:alnum:]]", "_", s)))) })
+    stages <- unique(data$Model_stage)
+    map(stages, function(s) {
+      tagList(
+        h5(style="margin-top:15px; border-bottom: 1px solid #ccc; font-weight:bold; font-size: 0.9em;", s),
+        DTOutput(paste0("table_", gsub("[^[:alnum:]]", "_", s)))
+      )
+    })
   })
 
   observe({
     data <- filtered_data()
-    for (s in unique(data$Key_stages)) {
+    for (s in unique(data$Model_stage)) {
       local({
         curr_s <- s
         output[[paste0("table_", gsub("[^[:alnum:]]", "_", curr_s))]] <- renderDT({
-          df_subset <- data %>% filter(Key_stages == curr_s) %>% 
-            select(Criterion, Omission_errors, Commission_errors) %>%
-            add_match_reason() %>%
-            mutate(
-              Omission_errors = mapply(display_risk_value, Omission_errors, input$omission_filter),
-              Commission_errors = mapply(display_risk_value, Commission_errors, input$commission_filter)
+          df_subset <- data %>%
+            filter(Model_stage == curr_s) %>%
+            transmute(
+              Criterion,
+              Underprediction = mapply(display_certainty, Underprediction_certainty, Underprediction_selected),
+              Overprediction = mapply(display_certainty, Overprediction_certainty, Overprediction_selected),
+              Match_reason
             )
           datatable(df_subset, selection = 'single', rownames = FALSE, options = list(dom = 't', paging = FALSE, columnDefs = list(list(width = '35%', targets = 0), list(width = '20%', targets = 1), list(width = '20%', targets = 2), list(width = '25%', targets = 3)))) %>%
-            formatStyle('Omission_errors', backgroundColor = styleEqual(names(RISK_COLORS), RISK_COLORS)) %>%
-            formatStyle('Commission_errors', backgroundColor = styleEqual(names(RISK_COLORS), RISK_COLORS))
+            formatStyle('Underprediction', backgroundColor = styleEqual(names(CERTAINTY_COLORS), CERTAINTY_COLORS)) %>%
+            formatStyle('Overprediction', backgroundColor = styleEqual(names(CERTAINTY_COLORS), CERTAINTY_COLORS))
         })
         observeEvent(input[[paste0("table_", gsub("[^[:alnum:]]", "_", curr_s), "_rows_selected")]], {
-          idx <- input[[paste0("table_", gsub("[^[:alnum:]]", "_", curr_s), "_rows_selected")]];
-          selected_row_data(data %>% filter(Key_stages == curr_s) %>% slice(idx))
+          idx <- input[[paste0("table_", gsub("[^[:alnum:]]", "_", curr_s), "_rows_selected")]]
+          selected_row_data(data %>% filter(Model_stage == curr_s) %>% slice(idx))
         })
       })
     }
   })
 
-  output$report_criteria_table <- renderDT({
+  report_table_data <- reactive({
     data <- filtered_data()
-    if(nrow(data) == 0) {
-      return(datatable(data.frame(Message = "No criteria match the current selections."), rownames = FALSE, options = list(dom = 't', paging = FALSE)))
+    if (nrow(data) == 0) {
+      return(data.frame(Message = "No criteria match the current selections."))
     }
-    report_df <- data %>%
-      select(Criterion, Key_stages, Omission_errors, Commission_errors) %>%
-      add_match_reason() %>%
-      mutate(
-        Omission_errors = mapply(display_risk_value, Omission_errors, input$omission_filter),
-        Commission_errors = mapply(display_risk_value, Commission_errors, input$commission_filter)
+    data %>%
+      transmute(
+        Criterion,
+        Model_stage,
+        Model_step,
+        Underprediction_certainty = mapply(display_certainty, Underprediction_certainty, Underprediction_selected),
+        Overprediction_certainty = mapply(display_certainty, Overprediction_certainty, Overprediction_selected),
+        Match_reason
       )
-    datatable(report_df, rownames = FALSE, options = list(dom = 't', paging = FALSE, columnDefs = list(list(width = '25%', targets = 0), list(width = '20%', targets = 1), list(width = '18%', targets = 2), list(width = '18%', targets = 3), list(width = '19%', targets = 4)))) %>%
-      formatStyle('Omission_errors', backgroundColor = styleEqual(names(RISK_COLORS), RISK_COLORS)) %>%
-      formatStyle('Commission_errors', backgroundColor = styleEqual(names(RISK_COLORS), RISK_COLORS))
+  })
+
+  output$report_criteria_table <- renderDT({
+    report_df <- report_table_data()
+    table <- datatable(report_df, rownames = FALSE, options = list(dom = 't', paging = FALSE))
+    if (!all(c("Underprediction_certainty", "Overprediction_certainty") %in% names(report_df))) return(table)
+    table %>%
+      formatStyle('Underprediction_certainty', backgroundColor = styleEqual(names(CERTAINTY_COLORS), CERTAINTY_COLORS)) %>%
+      formatStyle('Overprediction_certainty', backgroundColor = styleEqual(names(CERTAINTY_COLORS), CERTAINTY_COLORS))
   })
 
   output$report_tab_content <- renderUI({
-    req(input$cat_select, input$subcat_select)
-    app_row <- selected_app()
+    category_row <- selected_category()
     tagList(
       div(class = "section-title", "Application Context"),
       div(class = "report-box",
           h4(style="color: #2c3e50; margin-top:0;", paste("Category:", input$cat_select)),
-          h5(style="color: #18bc9c;", paste("Subcategory:", input$subcat_select)),
-          p(strong("Selected Model Types: "), selected_model_types()),
-          p(strong("Suggested Omission Risk: "), app_row$Omission_errors),
-          p(strong("Suggested Commission Risk: "), app_row$Commission_errors),
-          p(strong("Active Risk Filter Rule: "), ifelse(identical(input$risk_match_mode, "all"), "Match both selected risk thresholds", "Match either selected risk threshold")),
+          p(strong("Selected Model Type: "), input$type_select),
+          p(strong("Severity Tolerance: "), tolerance_label(input$severity_tolerance)),
+          p(strong("Certainty Tolerance: "), tolerance_label(input$certainty_tolerance)),
+          p(strong("Underprediction Severity: "), category_row$Underprediction_error_effect, " (", category_row$Underprediction_error_severity_rank, ")"),
+          p(strong("Overprediction Severity: "), category_row$Overprediction_error_effect, " (", category_row$Overprediction_error_severity_rank, ")"),
           p(strong("Team Overview: "), input$team_overview)),
       div(class = "section-title", "The purpose of my model application"),
       div(class = "report-box", if(submitted_purpose() == "") p(em("No purpose described.")) else p(submitted_purpose())),
       div(class = "section-title", "Relevant criteria for your application"),
       div(class = "report-box",
           div(class = "criteria-count", paste0("Showing ", nrow(filtered_data()), " criteria.")),
-          fluidRow(column(6, h6("Omission Risk Summary", align="center"), plotlyOutput("radar_omission_report", height = "280px")), column(6, h6("Commission Risk Summary", align="center"), plotlyOutput("radar_commission_report", height = "280px"))),
+          fluidRow(column(6, h6("Underprediction Criteria", align="center"), plotlyOutput("radar_underprediction_report", height = "280px")), column(6, h6("Overprediction Criteria", align="center"), plotlyOutput("radar_overprediction_report", height = "280px"))),
           hr(),
           DTOutput("report_criteria_table"))
     )
   })
 
-  output$radar_omission_report <- renderPlotly({
-    if (is.null(input$omission_filter) || input$omission_filter == "") return(render_empty_radar("Select an omission risk level"))
-    render_radar_logic(base_filtered(), "Omission_errors", input$omission_filter)
+  output$radar_underprediction_report <- renderPlotly({
+    render_stage_plot("Underprediction")
   })
-  output$radar_commission_report <- renderPlotly({
-    if (is.null(input$commission_filter) || input$commission_filter == "") return(render_empty_radar("Select a commission risk level"))
-    render_radar_logic(base_filtered(), "Commission_errors", input$commission_filter)
+
+  output$radar_overprediction_report <- renderPlotly({
+    render_stage_plot("Overprediction")
   })
 
   output$download_docx <- downloadHandler(
     filename = function() { paste("SDM-Report-", Sys.Date(), ".docx", sep="") },
     content = function(file) {
-      app_row <- selected_app()
-      report_data <- filtered_data() %>%
-        select(Criterion, Key_stages, Omission_errors, Commission_errors) %>%
-        add_match_reason() %>%
-        mutate(
-          Omission_errors = mapply(display_risk_value, Omission_errors, input$omission_filter),
-          Commission_errors = mapply(display_risk_value, Commission_errors, input$commission_filter)
-        )
-
-      if (nrow(report_data) == 0) {
-        report_data <- data.frame(Message = "No criteria match the current selections.")
-      }
-
-      omission_summary <- risk_summary_table(base_filtered(), "Omission_errors", input$omission_filter)
-      commission_summary <- risk_summary_table(base_filtered(), "Commission_errors", input$commission_filter)
-      risk_rule <- ifelse(identical(input$risk_match_mode, "all"), "Match both selected risk thresholds", "Match either selected risk threshold")
+      category_row <- selected_category()
+      report_data <- report_table_data()
+      active <- active_error_types()
 
       doc <- read_docx() %>% 
         body_add_par("SDM Application & Criteria Report", style = "heading 1") %>%
@@ -655,15 +661,12 @@ server <- function(input, output, session) {
         
         body_add_par("1. Application Context", style = "heading 2") %>%
         body_add_par(paste("Application Category:", input$cat_select), style = "Normal") %>%
-        body_add_par(paste("Application Subcategory:", input$subcat_select), style = "Normal") %>%
-        body_add_par(paste("Selected Model Types:", selected_model_types()), style = "Normal") %>%
-        body_add_par(paste("Suggested Omission Risk:", app_row$Omission_errors), style = "Normal") %>%
-        body_add_par(paste("Suggested Commission Risk:", app_row$Commission_errors), style = "Normal") %>%
-        body_add_par(paste("Active Risk Filter Rule:", risk_rule), style = "Normal") %>%
-        body_add_par("Purpose / Problem to Solve:", style = "heading 3") %>%
-        body_add_par(ifelse(app_row[["Purpose_problem_to solve"]] == "", "N/A", app_row[["Purpose_problem_to solve"]]), style = "Normal") %>%
-        body_add_par("How Predictions Inform Decisions:", style = "heading 3") %>%
-        body_add_par(ifelse(app_row$How_predictions_inform_decisions == "", "N/A", app_row$How_predictions_inform_decisions), style = "Normal") %>%
+        body_add_par(paste("Selected Model Type:", input$type_select), style = "Normal") %>%
+        body_add_par(paste("Severity Tolerance:", tolerance_label(input$severity_tolerance)), style = "Normal") %>%
+        body_add_par(paste("Certainty Tolerance:", tolerance_label(input$certainty_tolerance)), style = "Normal") %>%
+        body_add_par(paste("Error Types Considered:", ifelse(length(active) == 0, "None", paste(active, collapse = ", "))), style = "Normal") %>%
+        body_add_par(paste("Underprediction Severity:", category_row$Underprediction_error_effect, "(", category_row$Underprediction_error_severity_rank, ")"), style = "Normal") %>%
+        body_add_par(paste("Overprediction Severity:", category_row$Overprediction_error_effect, "(", category_row$Overprediction_error_severity_rank, ")"), style = "Normal") %>%
         body_add_par("", style = "Normal") %>%
         
         body_add_par("2. Purpose of Model Application", style = "heading 2") %>%
@@ -675,16 +678,7 @@ server <- function(input, output, session) {
         
         body_add_par("3. Recommended Criteria", style = "heading 2") %>%
         body_add_par(paste("Number of criteria included:", nrow(filtered_data())), style = "Normal") %>%
-        body_add_par(paste("Omission Filter Applied:", risk_threshold_label(input$omission_filter)), style = "Normal") %>%
-        body_add_par(paste("Commission Filter Applied:", risk_threshold_label(input$commission_filter)), style = "Normal") %>%
         body_add_par("", style = "Normal") %>%
-        body_add_par("Omission Risk Counts by Model Stage", style = "heading 3") %>%
-        body_add_table(omission_summary, style = "table_template") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("Commission Risk Counts by Model Stage", style = "heading 3") %>%
-        body_add_table(commission_summary, style = "table_template") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("Criteria Table", style = "heading 3") %>%
         body_add_table(report_data, style = "table_template")
       
       print(doc, target = file)
@@ -693,23 +687,25 @@ server <- function(input, output, session) {
 
   output$download_csv <- downloadHandler(
     filename = function() { paste("SDM-Criteria-", Sys.Date(), ".csv", sep="") },
-    content = function(file) { write.csv(add_match_reason(filtered_data()), file, row.names = FALSE) }
+    content = function(file) { write.csv(report_table_data(), file, row.names = FALSE) }
   )
 
   output$details_panel <- renderUI({
-    res <- selected_row_data(); if (is.null(res)) return(p(em("Click a criterion to view details.")))
+    res <- selected_row_data()
+    if (is.null(res)) return(p(em("Click a criterion to view details.")))
+    justification <- if (identical(input$type_select, "Projection")) res$Projection_justification else res$Prediction_justification
     tagList(
       p(strong("Criterion: "), res$Criterion),
-      p(strong("Assumption:"), br(), create_glossary_links(res$Assumption_Description)), 
-      p(strong(style="color: #d63384;", "Violation Risks:"), br(), div(style="font-size: 0.85em; background-color: #fff0f7; padding: 8px; border-left: 4px solid #d63384;", create_glossary_links(res$Violation_of_Assumptions))), 
-      p(strong(style="color: #27ae60;", "Potential Solutions:"), br(), div(style="font-size: 0.85em; background-color: #f4fdf7; padding: 8px; border-left: 4px solid #27ae60;", create_glossary_links(res$Potential_Solutions))), 
-      p(strong("Reference: "), br(), span(style="font-size: 0.8em;", HTML(as.character(res$Author_reference))))
+      p(strong("Model Stage: "), res$Model_stage),
+      p(strong("Model Step: "), res$Model_step),
+      p(strong("Description:"), br(), create_glossary_links(res$Description)),
+      p(strong(style="color: #d63384;", "Violation:"), br(), div(style="font-size: 0.85em; background-color: #fff0f7; padding: 8px; border-left: 4px solid #d63384;", create_glossary_links(res$Violation))),
+      p(strong("Selected Error Pathway:"), br(), res$Match_reason),
+      p(strong("Underprediction Certainty: "), res$Underprediction_certainty),
+      p(strong("Overprediction Certainty: "), res$Overprediction_certainty),
+      if (!is.na(justification) && justification != "") p(strong("Justification:"), br(), create_glossary_links(justification)),
+      p(strong(style="color: #27ae60;", "Potential Solutions:"), br(), div(style="font-size: 0.85em; background-color: #f4fdf7; padding: 8px; border-left: 4px solid #27ae60;", create_glossary_links(res$Solutions)))
     )
-  })
-
-  output$subcat_ui <- renderUI({
-    req(input$cat_select); choices <- apps %>% filter(Model_application_category == input$cat_select) %>% pull(Model_application_subcategory) %>% unique() %>% sort()
-    selectInput("subcat_select", "Select Application Subcategory:", choices = choices)
   })
 
   observeEvent(input$glossary_click, {

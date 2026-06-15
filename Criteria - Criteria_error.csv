@@ -1,0 +1,4 @@
+Error_certainty,Definition,Error_certainty_rank
+Always,Violation almost always leads to an error,High
+Sometimes,"Violation leads to an error depending on ecological, sampling, or modelling context",Medium
+Rarely,Violation rarely leads to an error,Low

@@ -1,8 +1,8 @@
 # SDM Criteria Selector
 
 This project contains a Shiny app for filtering species distribution model (SDM)
-evaluation criteria by application context, model type, and omission/commission
-error risk.
+evaluation criteria by application category, model type, application error
+severity, and criterion error certainty.
 
 ## Main App
 
@@ -10,45 +10,61 @@ error risk.
 - `applications_criteria.html` is a rendered HTML output.
 - `SDM_criteria.Rproj` is the RStudio project file.
 
-Open `applications_criteria.qmd` in RStudio and run the Shiny document to use the
-app.
+Open `applications_criteria.qmd` in RStudio or Positron and run the Shiny
+document to use the app.
 
-## Data Files
+## Current Data Files
 
-- `model_applications.csv` defines application categories and subcategories,
-  suggested omission/commission risk levels, practitioner needs, and examples.
-- `model_criteria.csv` defines the SDM criteria inventory, including model-cycle
-  stage, assumption descriptions, violation risks, risk levels, potential
-  solutions, and model-type flags.
+- `Applications - Application_inventory.csv` lists specific applications and
+  links each one to an application category.
+- `Applications - Application_categories.csv` defines each application category,
+  its question/action framing, and the effect of underprediction and
+  overprediction errors.
+- `Applications - Application_error.csv` maps application error effects to
+  severity ranks: `Correctness -> High`, `Quality -> Medium`, and
+  `Efficiency -> Low`.
+- `Criteria - Criteria.csv` defines the SDM criteria inventory, including model
+  stage, model step, descriptions, violation effects, solutions, and certainty
+  values for each model-type/error-type pathway.
+- `Criteria - Criteria_error.csv` maps criterion error certainty values to
+  ranks: `Always -> High`, `Sometimes -> Medium`, and `Rarely -> Low`.
 - `glossary_app.csv` defines glossary terms used for clickable definitions in
   the app.
 - `tab1_landing_page_intro.docx` provides the landing-page guidance text.
 
-## Expected Model-Type Columns
-
-The app expects these model-type columns in the data:
-
-- `Explanation (Hypothesis testing)`
-- `Predictions (spatially explicit)`
-- `Predictions (Non-spatially explicit)`
-- `Projection (Extrapolation)`
-
-The app standardizes the older `Predictions (Spatially explicit)` capitalization
-in `model_criteria.csv` at startup.
+The older `model_applications.csv` and `model_criteria.csv` files are legacy
+inputs and are no longer used by the app.
 
 ## Filtering Logic
 
-The app first filters criteria by selected model type. Criteria are retained when
-at least one selected model-type column has a value of `1`.
+The user selects:
 
-The app then filters by omission and/or commission error risk as ordinal
-thresholds. For example, selecting `Moderate` includes criteria marked
-`Moderate`, `High`, or `Very high`. If both risks are selected, users can choose
-whether criteria must match either selected threshold or both selected
-thresholds.
+- an application category
+- a model type: `Prediction` or `Projection`
+- an application error severity tolerance: `High`, `Medium`, or `Low`
+- a criterion error certainty tolerance: `High`, `Medium`, or `Low`
 
-Suggested risk levels are initialized from the selected application/subcategory
-in `model_applications.csv`, but users can adjust them in the sidebar.
+The selected application category and severity tolerance determine whether
+underprediction, overprediction, or both error types are relevant. For example,
+if underprediction has severity `High` and overprediction has severity `Low`,
+then a `Medium` severity tolerance considers underprediction but not
+overprediction.
+
+The selected model type determines which criterion certainty columns are used:
+
+- `Underprediction_prediction_error_certainty`
+- `Overprediction_prediction_error_certainty`
+- `Underprediction_projection_error_certainty`
+- `Overprediction_projection_error_certainty`
+
+The certainty tolerance then filters criteria using ordinal thresholds:
+
+- `High` includes criteria ranked `High`
+- `Medium` includes criteria ranked `High` or `Medium`
+- `Low` includes criteria ranked `High`, `Medium`, or `Low`
+
+A criterion is selected when at least one active error type passes the criterion
+certainty threshold.
 
 ## Required R Packages
 
