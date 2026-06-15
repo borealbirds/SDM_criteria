@@ -41,9 +41,11 @@ in `model_criteria.csv` at startup.
 The app first filters criteria by selected model type. Criteria are retained when
 at least one selected model-type column has a value of `1`.
 
-The app then filters by omission and/or commission error risk. If both risks are
-selected, users can choose whether criteria must match either selected risk or
-both selected risks.
+The app then filters by omission and/or commission error risk as ordinal
+thresholds. For example, selecting `Moderate` includes criteria marked
+`Moderate`, `High`, or `Very high`. If both risks are selected, users can choose
+whether criteria must match either selected threshold or both selected
+thresholds.
 
 Suggested risk levels are initialized from the selected application/subcategory
 in `model_applications.csv`, but users can adjust them in the sidebar.

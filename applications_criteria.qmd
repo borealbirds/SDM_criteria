@@ -170,7 +170,7 @@ ui <- fluidPage(
       selectInput("risk_match_mode", "When both risks are selected:",
                   choices = c("Match either risk" = "any", "Match both risks" = "all"),
                   selected = "any"),
-      div(class = "risk-note", "Risk filters are initialized from the selected application and can be adjusted."),
+      div(class = "risk-note", "Risk filters are thresholds: selecting Moderate includes Moderate, High, and Very high criteria."),
       actionButton("reset_filters", "Reset Filters", class = "btn-secondary w-100")
     ),
     
@@ -271,7 +271,19 @@ server <- function(input, output, session) {
 
   display_risk_value <- function(value, selected_filter) {
     if (is.null(selected_filter)) return(value)
-    if (selected_filter == "" || value == selected_filter) value else ""
+    if (selected_filter == "" || risk_at_or_above(value, selected_filter)) value else ""
+  }
+
+  risk_at_or_above <- function(value, selected_filter) {
+    if (is.null(selected_filter) || selected_filter == "") return(TRUE)
+    value_rank <- match(value, RISK_LEVELS)
+    selected_rank <- match(selected_filter, RISK_LEVELS)
+    !is.na(value_rank) & !is.na(selected_rank) & value_rank <= selected_rank
+  }
+
+  risk_threshold_label <- function(selected_filter) {
+    if (is.null(selected_filter) || selected_filter == "") return("No risk filter")
+    paste(selected_filter, "or higher")
   }
 
   match_reason <- function(omission_value, commission_value) {
@@ -280,11 +292,11 @@ server <- function(input, output, session) {
     if (is.null(om_val)) om_val <- ""
     if (is.null(com_val)) com_val <- ""
     if (om_val == "" && com_val == "") return("Included by selected model type")
-    om_match <- om_val != "" && omission_value == om_val
-    com_match <- com_val != "" && commission_value == com_val
-    if (om_match && com_match) return("Matched omission and commission risk")
-    if (om_match) return("Matched omission risk")
-    if (com_match) return("Matched commission risk")
+    om_match <- om_val != "" && risk_at_or_above(omission_value, om_val)
+    com_match <- com_val != "" && risk_at_or_above(commission_value, com_val)
+    if (om_match && com_match) return("Matched omission and commission risk thresholds")
+    if (om_match) return("Matched omission risk threshold")
+    if (com_match) return("Matched commission risk threshold")
     "Included"
   }
 
@@ -303,12 +315,12 @@ server <- function(input, output, session) {
       return(data.frame(Key_stages = stages, Risk_level = "None selected", Count = 0))
     }
     counts <- df %>%
-      filter(!!sym(error_col) == selected_level) %>%
+      filter(risk_at_or_above(!!sym(error_col), selected_level)) %>%
       count(Key_stages, name = "Count")
     data.frame(Key_stages = stages) %>%
       left_join(counts, by = "Key_stages") %>%
       mutate(
-        Risk_level = selected_level,
+        Risk_level = risk_threshold_label(selected_level),
         Count = ifelse(is.na(Count), 0, Count)
       ) %>%
       select(Key_stages, Risk_level, Count)
@@ -401,14 +413,22 @@ server <- function(input, output, session) {
     
     if (om_val != "" && com_val != "") {
       if (identical(input$risk_match_mode, "all")) {
-        df <- df %>% filter(Omission_errors == om_val & Commission_errors == com_val)
+        df <- df %>%
+          filter(
+            risk_at_or_above(Omission_errors, om_val) &
+              risk_at_or_above(Commission_errors, com_val)
+          )
       } else {
-        df <- df %>% filter(Omission_errors == om_val | Commission_errors == com_val)
+        df <- df %>%
+          filter(
+            risk_at_or_above(Omission_errors, om_val) |
+              risk_at_or_above(Commission_errors, com_val)
+          )
       }
     } else if (om_val != "") {
-      df <- df %>% filter(Omission_errors == om_val)
+      df <- df %>% filter(risk_at_or_above(Omission_errors, om_val))
     } else {
-      df <- df %>% filter(Commission_errors == com_val)
+      df <- df %>% filter(risk_at_or_above(Commission_errors, com_val))
     }
     df
   })
@@ -447,7 +467,7 @@ server <- function(input, output, session) {
     req(input$cat_select, input$subcat_select)
     app_row <- selected_app()
     needs_split <- unlist(strsplit(app_row$What_practitioners_want, ",(?=[^,]*$|\\s*['\"])", perl = TRUE)) 
-    risk_mode_text <- if (identical(input$risk_match_mode, "all")) "both selected risk levels" else "either selected risk level"
+    risk_mode_text <- if (identical(input$risk_match_mode, "all")) "both selected risk thresholds" else "either selected risk threshold"
     tagList(
       h4(style = "color: #2c3e50; font-weight: bold; margin-bottom: 10px;", "Model Application Summary"),
       div(class = "selection-bar", paste0("You have selected: ", input$cat_select, " (", input$subcat_select, ") + ", selected_model_types()),
@@ -455,7 +475,7 @@ server <- function(input, output, session) {
               strong("Suggested Risk for selection:"), br(),
               span(style = "margin-left: 10px;", "Omission: ", span(style = get_risk_style(app_row$Omission_errors), app_row$Omission_errors)),
               span(style = "margin-left: 20px;", "Commission: ", span(style = get_risk_style(app_row$Commission_errors), app_row$Commission_errors)),
-              br(), br(), strong("Active filter rule: "), paste("Criteria match", risk_mode_text, "when both omission and commission risks are selected."),
+              br(), br(), strong("Active filter rule: "), paste("Criteria match", risk_mode_text, "or anything higher when both omission and commission risks are selected."),
               br(), br(), strong("Practitioner Needs:"),
               tags$ul(style = "margin-top: 5px; margin-bottom: 0;", lapply(needs_split, function(n) tags$li(create_glossary_links(trimws(n)))))
           )
@@ -466,16 +486,17 @@ server <- function(input, output, session) {
 
   render_radar_logic <- function(df_base, error_col, filter_input) {
     stages <- sort(unique(criteria_df$Key_stages)); stages <- stages[stages != "" & !is.na(stages)]
-    max_range <- if ("Very high" %in% filter_input || "High" %in% filter_input) 15 else 10
     p <- plot_ly(type = 'scatterpolar', fill = 'toself')
     lvl <- filter_input
+    max_range <- 10
     if (lvl != "") {
-        counts <- df_base %>% filter(!!sym(error_col) == lvl) %>% group_by(Key_stages) %>% summarise(n = n(), .groups = 'drop')
+        counts <- df_base %>% filter(risk_at_or_above(!!sym(error_col), lvl)) %>% group_by(Key_stages) %>% summarise(n = n(), .groups = 'drop')
         plot_df <- data.frame(Key_stages = stages) %>% left_join(counts, by = "Key_stages") %>% mutate(n = ifelse(is.na(n), 0, n))
+        max_range <- max(10, ceiling(max(plot_df$n, na.rm = TRUE) / 5) * 5)
         display_labels <- gsub("Data quality, relevance and preparation", "Data sets", plot_df$Key_stages)
         display_labels <- gsub(" ", "<br>", display_labels)
         p <- p %>% add_trace(r = c(plot_df$n, plot_df$n[1]), theta = c(display_labels, display_labels[1]), 
-                             name = lvl, fillcolor = RISK_COLORS[lvl], line = list(color = RISK_BORDER_COLORS[lvl], width = 2), opacity = 0.5)
+                             name = risk_threshold_label(lvl), fillcolor = RISK_COLORS[lvl], line = list(color = RISK_BORDER_COLORS[lvl], width = 2), opacity = 0.5)
     }
     p %>% layout(margin = list(l = 60, r = 60, t = 10, b = 10),
       polar = list(domain = list(x = c(0.1, 0.9), y = c(0.05, 0.95)), 
@@ -584,7 +605,7 @@ server <- function(input, output, session) {
           p(strong("Selected Model Types: "), selected_model_types()),
           p(strong("Suggested Omission Risk: "), app_row$Omission_errors),
           p(strong("Suggested Commission Risk: "), app_row$Commission_errors),
-          p(strong("Active Risk Filter Rule: "), ifelse(identical(input$risk_match_mode, "all"), "Match both selected risks", "Match either selected risk")),
+          p(strong("Active Risk Filter Rule: "), ifelse(identical(input$risk_match_mode, "all"), "Match both selected risk thresholds", "Match either selected risk threshold")),
           p(strong("Team Overview: "), input$team_overview)),
       div(class = "section-title", "The purpose of my model application"),
       div(class = "report-box", if(submitted_purpose() == "") p(em("No purpose described.")) else p(submitted_purpose())),
@@ -624,7 +645,7 @@ server <- function(input, output, session) {
 
       omission_summary <- risk_summary_table(base_filtered(), "Omission_errors", input$omission_filter)
       commission_summary <- risk_summary_table(base_filtered(), "Commission_errors", input$commission_filter)
-      risk_rule <- ifelse(identical(input$risk_match_mode, "all"), "Match both selected risks", "Match either selected risk")
+      risk_rule <- ifelse(identical(input$risk_match_mode, "all"), "Match both selected risk thresholds", "Match either selected risk threshold")
 
       doc <- read_docx() %>% 
         body_add_par("SDM Application & Criteria Report", style = "heading 1") %>%
@@ -654,8 +675,8 @@ server <- function(input, output, session) {
         
         body_add_par("3. Recommended Criteria", style = "heading 2") %>%
         body_add_par(paste("Number of criteria included:", nrow(filtered_data())), style = "Normal") %>%
-        body_add_par(paste("Omission Filter Applied:", ifelse(input$omission_filter == "", "None", input$omission_filter)), style = "Normal") %>%
-        body_add_par(paste("Commission Filter Applied:", ifelse(input$commission_filter == "", "None", input$commission_filter)), style = "Normal") %>%
+        body_add_par(paste("Omission Filter Applied:", risk_threshold_label(input$omission_filter)), style = "Normal") %>%
+        body_add_par(paste("Commission Filter Applied:", risk_threshold_label(input$commission_filter)), style = "Normal") %>%
         body_add_par("", style = "Normal") %>%
         body_add_par("Omission Risk Counts by Model Stage", style = "heading 3") %>%
         body_add_table(omission_summary, style = "table_template") %>%
