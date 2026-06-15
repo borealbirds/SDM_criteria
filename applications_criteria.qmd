@@ -20,6 +20,9 @@ apps <- read.csv("model_applications.csv", stringsAsFactors = FALSE, check.names
 criteria_df <- read.csv("model_criteria.csv", stringsAsFactors = FALSE, check.names = FALSE)
 glossary <- read.csv("glossary_app.csv", stringsAsFactors = FALSE, check.names = FALSE)
 
+# Standardize model-type column names across input files.
+names(criteria_df)[names(criteria_df) == "Predictions (Spatially explicit)"] <- "Predictions (spatially explicit)"
+
 read_landing_docx <- function(filepath) {
   if(!file.exists(filepath)) return(rep("", 20))
   doc <- read_docx(filepath)
