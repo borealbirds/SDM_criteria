@@ -20,8 +20,68 @@ apps <- read.csv("model_applications.csv", stringsAsFactors = FALSE, check.names
 criteria_df <- read.csv("model_criteria.csv", stringsAsFactors = FALSE, check.names = FALSE)
 glossary <- read.csv("glossary_app.csv", stringsAsFactors = FALSE, check.names = FALSE)
 
+MODEL_TYPES <- c(
+  "Explanation (Hypothesis testing)",
+  "Predictions (spatially explicit)",
+  "Predictions (Non-spatially explicit)",
+  "Projection (Extrapolation)"
+)
+
 # Standardize model-type column names across input files.
 names(criteria_df)[names(criteria_df) == "Predictions (Spatially explicit)"] <- "Predictions (spatially explicit)"
+
+repair_mojibake <- function(x) {
+  mojibake_pattern <- paste(c("\\u00c3", "\\u00c2", "\\u00e2"), collapse = "|")
+  needs_repair <- !is.na(x) & str_detect(x, mojibake_pattern)
+  repaired <- iconv(x[needs_repair], from = "CP1252", to = "UTF-8")
+  x[needs_repair] <- ifelse(is.na(repaired), x[needs_repair], repaired)
+  x
+}
+
+repair_text_columns <- function(df) {
+  df %>% mutate(across(where(is.character), repair_mojibake))
+}
+
+validate_columns <- function(df, required_cols, file_label) {
+  missing_cols <- setdiff(required_cols, names(df))
+  if (length(missing_cols) > 0) {
+    stop(
+      paste0(
+        file_label,
+        " is missing required column(s): ",
+        paste(missing_cols, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+}
+
+validate_columns(
+  apps,
+  c(
+    "Model_application_category", "Definition", "Model_application_subcategory",
+    "Purpose_problem_to solve", "How_predictions_inform_decisions",
+    "Omission_errors", "Commission_errors", "What_practitioners_want",
+    "Reference_example", MODEL_TYPES
+  ),
+  "model_applications.csv"
+)
+
+validate_columns(
+  criteria_df,
+  c(
+    "Key_stages", "Criterion", "Assumption_Description",
+    "Violation_of_Assumptions", "Omission_errors", "Commission_errors",
+    "Potential_Solutions", "Author_reference", MODEL_TYPES
+  ),
+  "model_criteria.csv"
+)
+
+validate_columns(glossary, c("Term", "Definition"), "glossary_app.csv")
+
+apps <- repair_text_columns(apps)
+criteria_df <- repair_text_columns(criteria_df)
+glossary <- repair_text_columns(glossary)
 
 read_landing_docx <- function(filepath) {
   if(!file.exists(filepath)) return(rep("", 20))
@@ -29,15 +89,13 @@ read_landing_docx <- function(filepath) {
   content <- docx_summary(doc)
   text_lines <- content$text[content$content_type == "paragraph"]
   text_lines <- text_lines[text_lines != "" & !is.na(text_lines) & text_lines != "NA"]
-  return(text_lines)
+  return(repair_mojibake(text_lines))
 }
 
 landing_lines <- read_landing_docx("tab1_landing_page_intro.docx")
 
 clean_flags <- function(df) {
-  cols_to_fix <- c("Explanation (Hypothesis testing)", "Predictions (spatially explicit)", 
-                   "Predictions (Non-spatially explicit)", "Projection (Extrapolation)")
-  df %>% mutate(across(any_of(cols_to_fix), ~ {
+  df %>% mutate(across(any_of(MODEL_TYPES), ~ {
     val <- as.numeric(.)
     ifelse(is.na(val), 0, val)
   }))
@@ -69,6 +127,18 @@ ui <- fluidPage(
       .legend-item { display: inline-block; margin: 0 12px; font-size: 0.8em; font-weight: bold; }
       .legend-box { display: inline-block; width: 10px; height: 10px; margin-right: 5px; border: 1px solid #666; vertical-align: middle; }
       .report-box { border: 1px solid #dee2e6; padding: 20px; border-radius: 10px; background-color: #ffffff; margin-bottom: 20px; }
+      .profile-box { border: 1px solid #dee2e6; padding: 15px; border-radius: 8px; background-color: #ffffff; margin-bottom: 15px; }
+      .profile-box-muted { background-color: #f8f9fa; }
+      .profile-box-info { background-color: #e8f4f8; }
+      .profile-box-purpose { background-color: #e8f8f5; border-left: 5px solid #1abc9c; }
+      .plot-box { background-color: #ffffff; border: 1px solid #ddd; padding: 5px; border-radius: 8px; margin-bottom: 10px; }
+      .plot-title { text-align: center; font-weight: bold; margin-bottom: 0; font-size: 0.8em; }
+      .criteria-scroll { height: 40vh; overflow-y: auto; padding-right: 5px; }
+      .details-box { height: 85vh; overflow-y: auto; background-color: #fcfcfc; border: 1px solid #ddd; border-top: 5px solid #18bc9c; padding: 15px; }
+      .empty-state { padding: 16px; border: 1px dashed #bbb; border-radius: 8px; color: #666; background-color: #fafafa; }
+      .criteria-count { margin-bottom: 12px; color: #2c3e50; font-weight: 600; }
+      .risk-note { font-size: 0.85em; color: #555; margin-top: -4px; margin-bottom: 8px; }
+      .report-actions { display: flex; gap: 10px; flex-wrap: wrap; }
       
       /* NEW CSS TO REDUCE SIDEBAR SPACING */
       .well .form-group { margin-bottom: 8px !important; }
@@ -91,13 +161,17 @@ ui <- fluidPage(
       hr(),
       h4("2. Model Type"),
       selectInput("type_select", "Select the general purpose(s):",
-                  choices = c("Explanation (Hypothesis testing)", "Predictions (spatially explicit)",
-                              "Predictions (Non-spatially explicit)", "Projection (Extrapolation)"), 
+                  choices = MODEL_TYPES, 
                   selected = NULL, multiple = TRUE),
       hr(),
       h4("3. Model Performance & Risk"),
       selectInput("omission_filter", "Omission Error:", choices = c("None" = "", RISK_LEVELS), selected = ""),
-      selectInput("commission_filter", "Commission Error:", choices = c("None" = "", RISK_LEVELS), selected = "")
+      selectInput("commission_filter", "Commission Error:", choices = c("None" = "", RISK_LEVELS), selected = ""),
+      selectInput("risk_match_mode", "When both risks are selected:",
+                  choices = c("Match either risk" = "any", "Match both risks" = "all"),
+                  selected = "any"),
+      div(class = "risk-note", "Risk filters are initialized from the selected application and can be adjusted."),
+      actionButton("reset_filters", "Reset Filters", class = "btn-secondary w-100")
     ),
     
     mainPanel(
@@ -112,8 +186,8 @@ ui <- fluidPage(
                    column(8, 
                           div(class = "section-title", "Summary of criteria along the model cycle"),
                           fluidRow(
-                            column(6, div(style = "background-color: #ffffff; border: 1px solid #ddd; padding: 5px; border-radius: 8px; margin-bottom: 10px;", h6(style="text-align: center; font-weight: bold; margin-bottom:0; font-size: 0.8em;", "Omission Counts"), plotlyOutput("radar_omission", height = "280px"))),
-                            column(6, div(style = "background-color: #ffffff; border: 1px solid #ddd; padding: 5px; border-radius: 8px; margin-bottom: 10px;", h6(style="text-align: center; font-weight: bold; margin-bottom:0; font-size: 0.8em;", "Commission Counts"), plotlyOutput("radar_commission", height = "280px")))
+                            column(6, div(class = "plot-box", h6(class = "plot-title", "Omission Counts"), plotlyOutput("radar_omission", height = "280px"))),
+                            column(6, div(class = "plot-box", h6(class = "plot-title", "Commission Counts"), plotlyOutput("radar_commission", height = "280px")))
                           ),
                           div(class = "custom-legend",
                               div(class="legend-item", span(class="legend-box", style=paste0("background:", RISK_COLORS["Very high"])), "Very high"),
@@ -123,11 +197,12 @@ ui <- fluidPage(
                           ),
                           hr(),
                           div(class = "section-title", "List of criteria (click on any row to display details)"),
-                          div(style = "height: 40vh; overflow-y: auto; padding-right: 5px;", uiOutput("criteria_tables_ui"))
+                          uiOutput("criteria_count"),
+                          div(class = "criteria-scroll", uiOutput("criteria_tables_ui"))
                    ),
                    column(4, 
                           div(class = "section-title", "Criterion Details"),
-                          wellPanel(style = "height: 85vh; overflow-y: auto; background-color: #fcfcfc; border: 1px solid #ddd; border-top: 5px solid #18bc9c; padding: 15px;",
+                          wellPanel(class = "details-box",
                                     uiOutput("details_panel")))
                  )
         ),
@@ -140,7 +215,7 @@ ui <- fluidPage(
                        column(4, textAreaInput("team_overview", "Overview for my team:", rows = 2))
                      ),
                      hr(),
-                     div(style="display: flex; gap: 10px;",
+                     div(class = "report-actions",
                          downloadButton("download_docx", "Export as .docx", class = "btn-success"),
                          downloadButton("download_csv", "Export as CSV", class = "btn-info")
                      )
@@ -157,16 +232,106 @@ server <- function(input, output, session) {
   selected_row_data <- reactiveVal(NULL)
   submitted_purpose <- reactiveVal("")
 
+  selected_app <- reactive({
+    req(input$cat_select, input$subcat_select)
+    app_row <- apps %>%
+      filter(
+        Model_application_category == input$cat_select,
+        Model_application_subcategory == input$subcat_select
+      ) %>%
+      slice(1)
+    req(nrow(app_row) > 0)
+    app_row
+  })
+
+  selected_model_types <- reactive({
+    if (is.null(input$type_select) || length(input$type_select) == 0) {
+      "None selected"
+    } else {
+      paste(input$type_select, collapse = ", ")
+    }
+  })
+
+  apply_suggested_risks <- function() {
+    app_row <- selected_app()
+    updateSelectInput(session, "omission_filter", selected = app_row$Omission_errors)
+    updateSelectInput(session, "commission_filter", selected = app_row$Commission_errors)
+    updateSelectInput(session, "risk_match_mode", selected = "any")
+  }
+
+  get_risk_style <- function(level) {
+    color <- RISK_COLORS[level]
+    if(is.na(color)) color <- "#ffffff"
+    paste0(
+      "background-color: ", color,
+      "; padding: 2px 8px; border-radius: 4px; font-weight: bold;",
+      " border: 1px solid rgba(0,0,0,0.1); color: #333;"
+    )
+  }
+
+  display_risk_value <- function(value, selected_filter) {
+    if (is.null(selected_filter)) return(value)
+    if (selected_filter == "" || value == selected_filter) value else ""
+  }
+
+  match_reason <- function(omission_value, commission_value) {
+    om_val <- input$omission_filter
+    com_val <- input$commission_filter
+    if (is.null(om_val)) om_val <- ""
+    if (is.null(com_val)) com_val <- ""
+    if (om_val == "" && com_val == "") return("Included by selected model type")
+    om_match <- om_val != "" && omission_value == om_val
+    com_match <- com_val != "" && commission_value == com_val
+    if (om_match && com_match) return("Matched omission and commission risk")
+    if (om_match) return("Matched omission risk")
+    if (com_match) return("Matched commission risk")
+    "Included"
+  }
+
+  add_match_reason <- function(df) {
+    if (nrow(df) == 0) return(df)
+    df %>%
+      rowwise() %>%
+      mutate(Match_reason = match_reason(Omission_errors, Commission_errors)) %>%
+      ungroup()
+  }
+
+  risk_summary_table <- function(df, error_col, selected_level) {
+    stages <- sort(unique(criteria_df$Key_stages))
+    stages <- stages[stages != "" & !is.na(stages)]
+    if (is.null(selected_level) || selected_level == "") {
+      return(data.frame(Key_stages = stages, Risk_level = "None selected", Count = 0))
+    }
+    counts <- df %>%
+      filter(!!sym(error_col) == selected_level) %>%
+      count(Key_stages, name = "Count")
+    data.frame(Key_stages = stages) %>%
+      left_join(counts, by = "Key_stages") %>%
+      mutate(
+        Risk_level = selected_level,
+        Count = ifelse(is.na(Count), 0, Count)
+      ) %>%
+      select(Key_stages, Risk_level, Count)
+  }
+
   observeEvent(input$cat_select, {
     updateSelectInput(session, "type_select", selected = character(0))
     updateSelectInput(session, "omission_filter", selected = "")
     updateSelectInput(session, "commission_filter", selected = "")
+    updateSelectInput(session, "risk_match_mode", selected = "any")
+    selected_row_data(NULL)
   })
 
   observeEvent(input$subcat_select, {
     updateSelectInput(session, "type_select", selected = character(0))
-    updateSelectInput(session, "omission_filter", selected = "")
-    updateSelectInput(session, "commission_filter", selected = "")
+    apply_suggested_risks()
+    selected_row_data(NULL)
+  })
+
+  observeEvent(input$reset_filters, {
+    updateSelectInput(session, "type_select", selected = character(0))
+    apply_suggested_risks()
+    selected_row_data(NULL)
   })
 
   observeEvent(input$submit_purpose, {
@@ -180,9 +345,12 @@ server <- function(input, output, session) {
     terms <- terms[order(nchar(terms), decreasing = TRUE)]
     processed_text <- text
     for (term in terms) {
-      pattern <- paste0("(?i)\\b(", term, ")(s|es)?\\b(?!([^<]*>))")
+      escaped_term <- str_replace_all(term, "([.|()\\^{}+$*?\\[\\]\\\\])", "\\\\\\1")
+      pattern <- paste0("(?i)\\b(", escaped_term, ")(s|es)?\\b(?!([^<]*>))")
       if (str_detect(processed_text, pattern)) {
-        replacement <- paste0("<a class='glossary-link' onclick=\"Shiny.setInputValue('glossary_click', '", term, "', {priority: 'event'})\">\\0</a>")
+        term_js <- gsub("\\\\", "\\\\\\\\", term)
+        term_js <- gsub("'", "\\\\'", term_js, fixed = TRUE)
+        replacement <- paste0("<a class='glossary-link' onclick=\"Shiny.setInputValue('glossary_click', '", term_js, "', {priority: 'event'})\">\\0</a>")
         processed_text <- str_replace(processed_text, pattern, replacement)
       }
     }
@@ -227,10 +395,16 @@ server <- function(input, output, session) {
     df <- base_filtered()
     om_val <- input$omission_filter
     com_val <- input$commission_filter
+    if (is.null(om_val)) om_val <- ""
+    if (is.null(com_val)) com_val <- ""
     if (om_val == "" && com_val == "") return(df)
     
     if (om_val != "" && com_val != "") {
-      df <- df %>% filter(Omission_errors == om_val | Commission_errors == com_val)
+      if (identical(input$risk_match_mode, "all")) {
+        df <- df %>% filter(Omission_errors == om_val & Commission_errors == com_val)
+      } else {
+        df <- df %>% filter(Omission_errors == om_val | Commission_errors == com_val)
+      }
     } else if (om_val != "") {
       df <- df %>% filter(Omission_errors == om_val)
     } else {
@@ -241,13 +415,12 @@ server <- function(input, output, session) {
 
   output$selection_display_tab2 <- renderUI({
     req(input$cat_select, input$subcat_select)
-    model_types <- if(is.null(input$type_select) || length(input$type_select) == 0) "None selected" else paste(input$type_select, collapse = ", ")
-    div(class = "selection-bar", paste0("You have selected: ", input$cat_select, " (", input$subcat_select, ") + ", model_types))
+    div(class = "selection-bar", paste0("You have selected: ", input$cat_select, " (", input$subcat_select, ") + ", selected_model_types()))
   })
 
   output$app_profile_display <- renderUI({
     req(input$cat_select, input$subcat_select)
-    row <- apps %>% filter(Model_application_category == input$cat_select, Model_application_subcategory == input$subcat_select) %>% slice(1)
+    row <- selected_app()
     type_defs <- if (!is.null(input$type_select) && length(input$type_select) > 0) {
       lapply(input$type_select, function(t) {
         def_row <- glossary %>% filter(Term == t); if(nrow(def_row) > 0) {
@@ -256,36 +429,33 @@ server <- function(input, output, session) {
       })
     } else ""
     tagList(
-      div(style = "border: 1px solid #dee2e6; padding: 15px; border-radius: 10px; background-color: #ffffff; margin-bottom: 15px;", 
+      div(class = "profile-box", 
           h3(style = "color: #2c3e50; border-bottom: 2px solid #2c3e50;", row$Model_application_category), p(em(create_glossary_links(row$Definition)))),
-      div(style = "border: 1px solid #dee2e6; padding: 15px; border-radius: 10px; background-color: #f8f9fa; margin-bottom: 15px;", 
+      div(class = "profile-box profile-box-muted", 
           h4(style = "color: #18bc9c;", row$Model_application_subcategory), hr(), 
           p(strong("Purpose: "), create_glossary_links(row[["Purpose_problem_to solve"]])), 
           p(strong("Decision Impact: "), create_glossary_links(row$How_predictions_inform_decisions)), 
           p(strong("Reference Example: "), HTML(as.character(row$Reference_example)))),
-      if (length(input$type_select) > 0) div(style = "border: 1px solid #dee2e6; padding: 15px; border-radius: 10px; background-color: #e8f4f8; margin-bottom: 15px;", 
+      if (length(input$type_select) > 0) div(class = "profile-box profile-box-info", 
                                              h4(style = "color: #2980b9; font-size: 1.1em;", "Selected Model Types:"), type_defs),
-      if (submitted_purpose() != "") div(style = "border: 1px solid #dee2e6; padding: 15px; border-radius: 10px; background-color: #e8f8f5; border-left: 5px solid #1abc9c; margin-bottom: 15px;",
+      if (submitted_purpose() != "") div(class = "profile-box profile-box-purpose",
                                          h4(style = "color: #16a085; font-size: 1.1em;", "My specific application purpose:"), p(style = "font-style: italic;", submitted_purpose()))
     )
   })
 
   output$selection_display_tab3 <- renderUI({
     req(input$cat_select, input$subcat_select)
-    app_row <- apps %>% filter(Model_application_category == input$cat_select, Model_application_subcategory == input$subcat_select) %>% slice(1)
-    model_types <- if(is.null(input$type_select) || length(input$type_select) == 0) "None selected" else paste(input$type_select, collapse = ", ")
+    app_row <- selected_app()
     needs_split <- unlist(strsplit(app_row$What_practitioners_want, ",(?=[^,]*$|\\s*['\"])", perl = TRUE)) 
-    get_risk_style <- function(level) {
-      color <- RISK_COLORS[level]; if(is.na(color)) color <- "#ffffff"
-      paste0("background-color: ", color, "; padding: 2px 8px; border-radius: 4px; font-weight: bold; border: 1px solid rgba(0,0,0,0.1); color: #333;")
-    }
+    risk_mode_text <- if (identical(input$risk_match_mode, "all")) "both selected risk levels" else "either selected risk level"
     tagList(
       h4(style = "color: #2c3e50; font-weight: bold; margin-bottom: 10px;", "Model Application Summary"),
-      div(class = "selection-bar", paste0("You have selected: ", input$cat_select, " (", input$subcat_select, ") + ", model_types),
+      div(class = "selection-bar", paste0("You have selected: ", input$cat_select, " (", input$subcat_select, ") + ", selected_model_types()),
           div(style = "margin-top: 10px; font-weight: normal; font-size: 0.9em; border-top: 1px solid rgba(0,0,0,0.1); padding-top: 10px;",
               strong("Suggested Risk for selection:"), br(),
               span(style = "margin-left: 10px;", "Omission: ", span(style = get_risk_style(app_row$Omission_errors), app_row$Omission_errors)),
               span(style = "margin-left: 20px;", "Commission: ", span(style = get_risk_style(app_row$Commission_errors), app_row$Commission_errors)),
+              br(), br(), strong("Active filter rule: "), paste("Criteria match", risk_mode_text, "when both omission and commission risks are selected."),
               br(), br(), strong("Practitioner Needs:"),
               tags$ul(style = "margin-top: 5px; margin-bottom: 0;", lapply(needs_split, function(n) tags$li(create_glossary_links(trimws(n)))))
           )
@@ -313,11 +483,50 @@ server <- function(input, output, session) {
       showlegend = FALSE)
   }
 
-  output$radar_omission <- renderPlotly({ req(input$omission_filter != ""); render_radar_logic(base_filtered(), "Omission_errors", input$omission_filter) })
-  output$radar_commission <- renderPlotly({ req(input$commission_filter != ""); render_radar_logic(base_filtered(), "Commission_errors", input$commission_filter) })
+  render_empty_radar <- function(message) {
+    plot_ly() %>%
+      layout(
+        xaxis = list(visible = FALSE),
+        yaxis = list(visible = FALSE),
+        annotations = list(
+          text = message,
+          x = 0.5,
+          y = 0.5,
+          xref = "paper",
+          yref = "paper",
+          showarrow = FALSE
+        ),
+        margin = list(l = 20, r = 20, t = 10, b = 10)
+      )
+  }
+
+  output$radar_omission <- renderPlotly({
+    if (is.null(input$omission_filter) || input$omission_filter == "") return(render_empty_radar("Select an omission risk level"))
+    render_radar_logic(base_filtered(), "Omission_errors", input$omission_filter)
+  })
+  output$radar_commission <- renderPlotly({
+    if (is.null(input$commission_filter) || input$commission_filter == "") return(render_empty_radar("Select a commission risk level"))
+    render_radar_logic(base_filtered(), "Commission_errors", input$commission_filter)
+  })
+
+  output$criteria_count <- renderUI({
+    all_count <- nrow(criteria_df)
+    type_count <- nrow(base_filtered())
+    filtered_count <- nrow(filtered_data())
+    div(
+      class = "criteria-count",
+      paste0(
+        "Showing ", filtered_count, " of ", all_count,
+        " criteria (", type_count, " match the selected model type filter)."
+      )
+    )
+  })
 
   output$criteria_tables_ui <- renderUI({
-    data <- filtered_data(); if(nrow(data) == 0) return(NULL);
+    data <- filtered_data()
+    if(nrow(data) == 0) {
+      return(div(class = "empty-state", "No criteria match this combination. Try selecting another model type, changing the risk level, or switching the risk filter rule."))
+    }
     stages <- unique(data$Key_stages)
     map(stages, function(s) { tagList(h5(style="margin-top:15px; border-bottom: 1px solid #ccc; font-weight:bold; font-size: 0.9em;", s), DTOutput(paste0("table_", gsub("[^[:alnum:]]", "_", s)))) })
   })
@@ -330,9 +539,12 @@ server <- function(input, output, session) {
         output[[paste0("table_", gsub("[^[:alnum:]]", "_", curr_s))]] <- renderDT({
           df_subset <- data %>% filter(Key_stages == curr_s) %>% 
             select(Criterion, Omission_errors, Commission_errors) %>%
-            mutate(Omission_errors = ifelse(Omission_errors == input$omission_filter, Omission_errors, ""),
-                   Commission_errors = ifelse(Commission_errors == input$commission_filter, Commission_errors, ""))
-          datatable(df_subset, selection = 'single', rownames = FALSE, options = list(dom = 't', paging = FALSE, columnDefs = list(list(width = '40%', targets = 0), list(width = '30%', targets = 1), list(width = '30%', targets = 2)))) %>%
+            add_match_reason() %>%
+            mutate(
+              Omission_errors = mapply(display_risk_value, Omission_errors, input$omission_filter),
+              Commission_errors = mapply(display_risk_value, Commission_errors, input$commission_filter)
+            )
+          datatable(df_subset, selection = 'single', rownames = FALSE, options = list(dom = 't', paging = FALSE, columnDefs = list(list(width = '35%', targets = 0), list(width = '20%', targets = 1), list(width = '20%', targets = 2), list(width = '25%', targets = 3)))) %>%
             formatStyle('Omission_errors', backgroundColor = styleEqual(names(RISK_COLORS), RISK_COLORS)) %>%
             formatStyle('Commission_errors', backgroundColor = styleEqual(names(RISK_COLORS), RISK_COLORS))
         })
@@ -346,40 +558,73 @@ server <- function(input, output, session) {
 
   output$report_criteria_table <- renderDT({
     data <- filtered_data()
-    if(nrow(data) == 0) return(NULL)
+    if(nrow(data) == 0) {
+      return(datatable(data.frame(Message = "No criteria match the current selections."), rownames = FALSE, options = list(dom = 't', paging = FALSE)))
+    }
     report_df <- data %>%
       select(Criterion, Key_stages, Omission_errors, Commission_errors) %>%
-      mutate(Omission_errors = ifelse(Omission_errors == input$omission_filter, Omission_errors, ""),
-             Commission_errors = ifelse(Commission_errors == input$commission_filter, Commission_errors, ""))
-    datatable(report_df, rownames = FALSE, options = list(dom = 't', paging = FALSE, columnDefs = list(list(width = '30%', targets = 0), list(width = '20%', targets = 1), list(width = '25%', targets = 2), list(width = '25%', targets = 3)))) %>%
+      add_match_reason() %>%
+      mutate(
+        Omission_errors = mapply(display_risk_value, Omission_errors, input$omission_filter),
+        Commission_errors = mapply(display_risk_value, Commission_errors, input$commission_filter)
+      )
+    datatable(report_df, rownames = FALSE, options = list(dom = 't', paging = FALSE, columnDefs = list(list(width = '25%', targets = 0), list(width = '20%', targets = 1), list(width = '18%', targets = 2), list(width = '18%', targets = 3), list(width = '19%', targets = 4)))) %>%
       formatStyle('Omission_errors', backgroundColor = styleEqual(names(RISK_COLORS), RISK_COLORS)) %>%
       formatStyle('Commission_errors', backgroundColor = styleEqual(names(RISK_COLORS), RISK_COLORS))
   })
 
   output$report_tab_content <- renderUI({
     req(input$cat_select, input$subcat_select)
-    model_types <- if(is.null(input$type_select) || length(input$type_select) == 0) "None selected" else paste(input$type_select, collapse = ", ")
+    app_row <- selected_app()
     tagList(
       div(class = "section-title", "Application Context"),
-      div(class = "report-box", h4(style="color: #2c3e50; margin-top:0;", paste("Category:", input$cat_select)), h5(style="color: #18bc9c;", paste("Subcategory:", input$subcat_select)), p(strong("Selected Model Types: "), model_types), p(strong("Team Overview: "), input$team_overview)),
+      div(class = "report-box",
+          h4(style="color: #2c3e50; margin-top:0;", paste("Category:", input$cat_select)),
+          h5(style="color: #18bc9c;", paste("Subcategory:", input$subcat_select)),
+          p(strong("Selected Model Types: "), selected_model_types()),
+          p(strong("Suggested Omission Risk: "), app_row$Omission_errors),
+          p(strong("Suggested Commission Risk: "), app_row$Commission_errors),
+          p(strong("Active Risk Filter Rule: "), ifelse(identical(input$risk_match_mode, "all"), "Match both selected risks", "Match either selected risk")),
+          p(strong("Team Overview: "), input$team_overview)),
       div(class = "section-title", "The purpose of my model application"),
       div(class = "report-box", if(submitted_purpose() == "") p(em("No purpose described.")) else p(submitted_purpose())),
       div(class = "section-title", "Relevant criteria for your application"),
-      div(class = "report-box", fluidRow(column(6, h6("Omission Risk Summary", align="center"), plotlyOutput("radar_omission_report", height = "280px")), column(6, h6("Commission Risk Summary", align="center"), plotlyOutput("radar_commission_report", height = "280px"))), hr(), DTOutput("report_criteria_table"))
+      div(class = "report-box",
+          div(class = "criteria-count", paste0("Showing ", nrow(filtered_data()), " criteria.")),
+          fluidRow(column(6, h6("Omission Risk Summary", align="center"), plotlyOutput("radar_omission_report", height = "280px")), column(6, h6("Commission Risk Summary", align="center"), plotlyOutput("radar_commission_report", height = "280px"))),
+          hr(),
+          DTOutput("report_criteria_table"))
     )
   })
 
-  output$radar_omission_report <- renderPlotly({ req(input$omission_filter != ""); render_radar_logic(base_filtered(), "Omission_errors", input$omission_filter) })
-  output$radar_commission_report <- renderPlotly({ req(input$commission_filter != ""); render_radar_logic(base_filtered(), "Commission_errors", input$commission_filter) })
+  output$radar_omission_report <- renderPlotly({
+    if (is.null(input$omission_filter) || input$omission_filter == "") return(render_empty_radar("Select an omission risk level"))
+    render_radar_logic(base_filtered(), "Omission_errors", input$omission_filter)
+  })
+  output$radar_commission_report <- renderPlotly({
+    if (is.null(input$commission_filter) || input$commission_filter == "") return(render_empty_radar("Select a commission risk level"))
+    render_radar_logic(base_filtered(), "Commission_errors", input$commission_filter)
+  })
 
   output$download_docx <- downloadHandler(
     filename = function() { paste("SDM-Report-", Sys.Date(), ".docx", sep="") },
     content = function(file) {
-      model_types <- if(is.null(input$type_select) || length(input$type_select) == 0) "None selected" else paste(input$type_select, collapse = ", ")
-      report_data <- filtered_data() %>% 
+      app_row <- selected_app()
+      report_data <- filtered_data() %>%
         select(Criterion, Key_stages, Omission_errors, Commission_errors) %>%
-        mutate(Omission_errors = ifelse(Omission_errors == input$omission_filter, Omission_errors, ""),
-               Commission_errors = ifelse(Commission_errors == input$commission_filter, Commission_errors, ""))
+        add_match_reason() %>%
+        mutate(
+          Omission_errors = mapply(display_risk_value, Omission_errors, input$omission_filter),
+          Commission_errors = mapply(display_risk_value, Commission_errors, input$commission_filter)
+        )
+
+      if (nrow(report_data) == 0) {
+        report_data <- data.frame(Message = "No criteria match the current selections.")
+      }
+
+      omission_summary <- risk_summary_table(base_filtered(), "Omission_errors", input$omission_filter)
+      commission_summary <- risk_summary_table(base_filtered(), "Commission_errors", input$commission_filter)
+      risk_rule <- ifelse(identical(input$risk_match_mode, "all"), "Match both selected risks", "Match either selected risk")
 
       doc <- read_docx() %>% 
         body_add_par("SDM Application & Criteria Report", style = "heading 1") %>%
@@ -390,7 +635,14 @@ server <- function(input, output, session) {
         body_add_par("1. Application Context", style = "heading 2") %>%
         body_add_par(paste("Application Category:", input$cat_select), style = "Normal") %>%
         body_add_par(paste("Application Subcategory:", input$subcat_select), style = "Normal") %>%
-        body_add_par(paste("Selected Model Types:", model_types), style = "Normal") %>%
+        body_add_par(paste("Selected Model Types:", selected_model_types()), style = "Normal") %>%
+        body_add_par(paste("Suggested Omission Risk:", app_row$Omission_errors), style = "Normal") %>%
+        body_add_par(paste("Suggested Commission Risk:", app_row$Commission_errors), style = "Normal") %>%
+        body_add_par(paste("Active Risk Filter Rule:", risk_rule), style = "Normal") %>%
+        body_add_par("Purpose / Problem to Solve:", style = "heading 3") %>%
+        body_add_par(ifelse(app_row[["Purpose_problem_to solve"]] == "", "N/A", app_row[["Purpose_problem_to solve"]]), style = "Normal") %>%
+        body_add_par("How Predictions Inform Decisions:", style = "heading 3") %>%
+        body_add_par(ifelse(app_row$How_predictions_inform_decisions == "", "N/A", app_row$How_predictions_inform_decisions), style = "Normal") %>%
         body_add_par("", style = "Normal") %>%
         
         body_add_par("2. Purpose of Model Application", style = "heading 2") %>%
@@ -401,9 +653,17 @@ server <- function(input, output, session) {
         body_add_par("", style = "Normal") %>%
         
         body_add_par("3. Recommended Criteria", style = "heading 2") %>%
+        body_add_par(paste("Number of criteria included:", nrow(filtered_data())), style = "Normal") %>%
         body_add_par(paste("Omission Filter Applied:", ifelse(input$omission_filter == "", "None", input$omission_filter)), style = "Normal") %>%
         body_add_par(paste("Commission Filter Applied:", ifelse(input$commission_filter == "", "None", input$commission_filter)), style = "Normal") %>%
         body_add_par("", style = "Normal") %>%
+        body_add_par("Omission Risk Counts by Model Stage", style = "heading 3") %>%
+        body_add_table(omission_summary, style = "table_template") %>%
+        body_add_par("", style = "Normal") %>%
+        body_add_par("Commission Risk Counts by Model Stage", style = "heading 3") %>%
+        body_add_table(commission_summary, style = "table_template") %>%
+        body_add_par("", style = "Normal") %>%
+        body_add_par("Criteria Table", style = "heading 3") %>%
         body_add_table(report_data, style = "table_template")
       
       print(doc, target = file)
@@ -412,7 +672,7 @@ server <- function(input, output, session) {
 
   output$download_csv <- downloadHandler(
     filename = function() { paste("SDM-Criteria-", Sys.Date(), ".csv", sep="") },
-    content = function(file) { write.csv(filtered_data(), file, row.names = FALSE) }
+    content = function(file) { write.csv(add_match_reason(filtered_data()), file, row.names = FALSE) }
   )
 
   output$details_panel <- renderUI({
@@ -433,6 +693,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$glossary_click, {
     term_info <- glossary %>% filter(Term == input$glossary_click) %>% slice(1)
+    req(nrow(term_info) > 0)
     showModal(modalDialog(title = term_info$Term, p(term_info$Definition), easyClose = TRUE))
   })
 }
