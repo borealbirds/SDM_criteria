@@ -1,0 +1,9 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.js
+*.Rproj
+*.css
+*.woff
+*.html
