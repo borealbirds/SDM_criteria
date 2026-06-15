@@ -35,6 +35,15 @@ CERTAINTY_COLORS <- c(
   "Rarely" = unname(TOLERANCE_COLORS["Low"])
 )
 ERROR_TYPES <- c("Underprediction", "Overprediction")
+APPLICATION_CATEGORY_CHOICES <- sort(unique(application_categories$Application_category))
+APPLICATION_CHOICES <- sort(unique(application_inventory$Application))
+DEFAULT_FILTERS <- list(
+  cat_select = "",
+  app_select = "",
+  type_select = "Prediction",
+  severity_tolerance = "Medium",
+  certainty_tolerance = "Medium"
+)
 
 repair_mojibake <- function(x) {
   mojibake_pattern <- paste(c("\\u00c3", "\\u00c2", "\\u00e2"), collapse = "|")
@@ -128,16 +137,6 @@ application_categories <- application_categories %>%
     by = "Overprediction_error_effect"
   )
 
-APPLICATION_CATEGORY_CHOICES <- sort(unique(application_categories$Application_category))
-APPLICATION_CHOICES <- sort(unique(application_inventory$Application))
-DEFAULT_FILTERS <- list(
-  cat_select = "",
-  app_select = "",
-  type_select = "Prediction",
-  severity_tolerance = "Medium",
-  certainty_tolerance = "Medium"
-)
-
 read_landing_docx <- function(filepath) {
   if(!file.exists(filepath)) return(rep("", 20))
   doc <- read_docx(filepath)
@@ -213,8 +212,7 @@ ui <- fluidPage(
     mainPanel(
       tabsetPanel(
         tabPanel("Objective & Guidance", br(), uiOutput("full_landing_page")),
-        tabPanel("Selected Application Context", br(), 
-                 uiOutput("selection_display_tab2"),
+        tabPanel("Selected use-case scenario", br(), 
                  uiOutput("app_profile_display")),
         tabPanel("Applicable Criteria", br(), 
                  uiOutput("selection_display_tab3"),
@@ -441,37 +439,37 @@ server <- function(input, output, session) {
     HTML(processed_text)
   }
 
-  observeEvent(input$filter_criteria, {
-    if ((is.null(input$cat_select) || input$cat_select == "") && (is.null(input$app_select) || input$app_select == "")) {
-      showNotification("Select an application category or a model application before filtering criteria.", type = "warning")
-      return()
-    }
-    category_to_apply <- input$cat_select
-    if ((is.null(category_to_apply) || category_to_apply == "") && !is.null(input$app_select) && input$app_select != "") {
-      app_row <- application_inventory %>%
-        filter(Application == input$app_select) %>%
-        slice(1)
-      if (nrow(app_row) > 0) category_to_apply <- app_row$Application_category
-    }
-    applied_filters(list(
-      cat_select = category_to_apply,
-      app_select = input$app_select,
-      type_select = input$type_select,
-      severity_tolerance = input$severity_tolerance,
-      certainty_tolerance = input$certainty_tolerance
-    ))
-    submitted_purpose(input$user_purpose)
-    selected_row_data(NULL)
-  })
+  split_semicolon_values <- function(value) {
+    if (is.null(value) || length(value) == 0 || is.na(value) || trimws(value) == "") return(character(0))
+    trimws(unlist(strsplit(value, ";", fixed = TRUE)))
+  }
+
+  render_application_examples <- function(app_row) {
+    if (!all(c("Example citation", "Citation URL") %in% names(app_row))) return(NULL)
+    citations <- split_semicolon_values(app_row[["Example citation"]])
+    urls <- split_semicolon_values(app_row[["Citation URL"]])
+    if (length(citations) == 0 && length(urls) == 0) return(NULL)
+    n_examples <- max(length(citations), length(urls))
+    div(
+      class = "profile-box profile-box-muted",
+      h4(style = "color: #18bc9c; font-size: 1.1em;", "Example application paper"),
+      tags$ul(lapply(seq_len(n_examples), function(i) {
+        citation <- if (i <= length(citations)) citations[i] else "Example paper"
+        url <- if (i <= length(urls)) urls[i] else ""
+        tags$li(
+          create_glossary_links(citation),
+          if (url != "") tagList(" ", tags$a(href = url, target = "_blank", url)) else NULL
+        )
+      }))
+    )
+  }
 
   observeEvent(input$cat_select, {
     choices_df <- application_inventory
     if (!is.null(input$cat_select) && input$cat_select != "") {
       choices_df <- choices_df %>% filter(Application_category == input$cat_select)
     }
-    choices <- choices_df %>%
-      arrange(Application) %>%
-      pull(Application)
+    choices <- choices_df %>% arrange(Application) %>% pull(Application)
     current_app <- isolate(input$app_select)
     selected_app <- if (!is.null(current_app) && current_app %in% choices) current_app else ""
     updateSelectInput(
@@ -480,6 +478,7 @@ server <- function(input, output, session) {
       choices = c("All applications in category" = "", choices),
       selected = selected_app
     )
+    selected_row_data(NULL)
   }, ignoreInit = FALSE)
 
   observeEvent(input$app_select, {
@@ -511,12 +510,30 @@ server <- function(input, output, session) {
         Application,
         Description
       )
-    datatable(
-      table_df,
-      rownames = FALSE,
-      filter = "top",
-      options = list(pageLength = 10, scrollX = TRUE)
-    )
+    datatable(table_df, rownames = FALSE, filter = "top", options = list(pageLength = 10, scrollX = TRUE))
+  })
+
+  observeEvent(input$filter_criteria, {
+    if ((is.null(input$cat_select) || input$cat_select == "") && (is.null(input$app_select) || input$app_select == "")) {
+      showNotification("Select an application category or a model application before filtering criteria.", type = "warning")
+      return()
+    }
+    category_to_apply <- input$cat_select
+    if ((is.null(category_to_apply) || category_to_apply == "") && !is.null(input$app_select) && input$app_select != "") {
+      app_row <- application_inventory %>%
+        filter(Application == input$app_select) %>%
+        slice(1)
+      if (nrow(app_row) > 0) category_to_apply <- app_row$Application_category
+    }
+    applied_filters(list(
+      cat_select = category_to_apply,
+      app_select = input$app_select,
+      type_select = input$type_select,
+      severity_tolerance = input$severity_tolerance,
+      certainty_tolerance = input$certainty_tolerance
+    ))
+    submitted_purpose(input$user_purpose)
+    selected_row_data(NULL)
   })
 
   output$full_landing_page <- renderUI({
@@ -534,11 +551,7 @@ server <- function(input, output, session) {
   output$selection_display_tab2 <- renderUI({
     filters <- current_filters()
     req(filters$cat_select, filters$type_select, filters$severity_tolerance, filters$certainty_tolerance)
-    app_text <- if (is.null(filters$app_select) || filters$app_select == "") {
-      "all applications in category"
-    } else {
-      filters$app_select
-    }
+    app_text <- if (is.null(filters$app_select) || filters$app_select == "") "all applications in category" else filters$app_select
     div(
       class = "selection-bar",
       paste0(
@@ -556,29 +569,56 @@ server <- function(input, output, session) {
     apps_for_category <- selected_applications()
     selected_app <- selected_application()
     active <- active_error_types()
+    filters <- current_filters()
+    pathway_df <- data.frame(
+      `Error type` = c("Underprediction", "Overprediction"),
+      Effect = c(category_row$Underprediction_error_effect, category_row$Overprediction_error_effect),
+      Rank = c(category_row$Underprediction_error_severity_rank, category_row$Overprediction_error_severity_rank),
+      Included = c(
+        ifelse("Underprediction" %in% active, "Yes", "No"),
+        ifelse("Overprediction" %in% active, "Yes", "No")
+      ),
+      check.names = FALSE
+    )
+    pathway_table <- tags$table(
+      class = "table table-sm table-striped",
+      tags$thead(tags$tr(lapply(names(pathway_df), tags$th))),
+      tags$tbody(lapply(seq_len(nrow(pathway_df)), function(i) {
+        tags$tr(lapply(pathway_df[i, ], tags$td))
+      }))
+    )
     tagList(
       div(class = "profile-box",
-          h3(style = "color: #2c3e50; border-bottom: 2px solid #2c3e50;", category_row$Application_category),
+          h3(style = "color: #2c3e50; border-bottom: 2px solid #2c3e50;", "Applied Scenario"),
+          p(strong("Application Category: "), category_row$Application_category),
+          p(strong("Selected Application: "), ifelse(is.null(filters$app_select) || filters$app_select == "", "All applications in category", filters$app_select)),
+          p(strong("Model Type: "), filters$type_select),
+          p(strong("Error Severity Tolerance: "), severity_tolerance_label(filters$severity_tolerance)),
+          p(strong("Error Certainty Tolerance: "), certainty_tolerance_label(filters$certainty_tolerance)),
+          p(strong("Error Types Considered: "), ifelse(length(active) == 0, "None at this severity tolerance", paste(active, collapse = ", ")))),
+      div(class = "profile-box profile-box-muted",
+          h4(style = "color: #18bc9c;", "Application Category"),
           p(strong("Question: "), create_glossary_links(category_row$Question)),
           p(strong("Action: "), create_glossary_links(category_row$Action))),
       if (!is.null(selected_app)) div(class = "profile-box profile-box-purpose",
           h4(style = "color: #16a085; font-size: 1.1em;", "Selected Model Application"),
           p(strong(selected_app$Application)),
           p(create_glossary_links(selected_app$Description))),
-      div(class = "profile-box profile-box-muted",
-          h4(style = "color: #18bc9c;", "Application Error Effects"),
-          p(strong("Underprediction: "), span(style = get_tolerance_style(category_row$Underprediction_error_severity_rank), category_row$Underprediction_error_severity_rank), " - ", category_row$Underprediction_error_effect),
-          p(create_glossary_links(category_row$Underprediction_error_effect_definition)),
-          p(strong("Overprediction: "), span(style = get_tolerance_style(category_row$Overprediction_error_severity_rank), category_row$Overprediction_error_severity_rank), " - ", category_row$Overprediction_error_effect),
-          p(create_glossary_links(category_row$Overprediction_error_effect_definition)),
-          p(strong("Error types considered: "), ifelse(length(active) == 0, "None at this severity tolerance", paste(active, collapse = ", ")))),
+      if (!is.null(selected_app)) render_application_examples(selected_app),
+      div(class = "profile-box",
+          h4(style = "color: #2c3e50; font-size: 1.1em;", "Error Pathway Logic"),
+          p("Application severity determines which error pathways are considered before criterion certainty is applied."),
+          pathway_table,
+          p(strong("Underprediction effect: "), category_row$Underprediction_error_effect, " - ", create_glossary_links(category_row$Underprediction_error_effect_definition)),
+          p(strong("Overprediction effect: "), category_row$Overprediction_error_effect, " - ", create_glossary_links(category_row$Overprediction_error_effect_definition))),
+      if (submitted_purpose() != "") div(class = "profile-box profile-box-purpose",
+                                         h4(style = "color: #16a085; font-size: 1.1em;", "Report Details"),
+                                         p(style = "font-style: italic;", submitted_purpose())),
       div(class = "profile-box profile-box-info",
-          h4(style = "color: #2980b9; font-size: 1.1em;", "Applications in this category"),
+          h4(style = "color: #2980b9; font-size: 1.1em;", "Other applications in this category"),
           tags$ul(lapply(seq_len(nrow(apps_for_category)), function(i) {
             tags$li(tags$strong(apps_for_category$Application[i]), ": ", create_glossary_links(apps_for_category$Description[i]))
-          }))),
-      if (submitted_purpose() != "") div(class = "profile-box profile-box-purpose",
-                                         h4(style = "color: #16a085; font-size: 1.1em;", "My specific application purpose:"), p(style = "font-style: italic;", submitted_purpose()))
+          })))
     )
   })
 
@@ -586,11 +626,7 @@ server <- function(input, output, session) {
     category_row <- selected_category()
     active <- active_error_types()
     filters <- current_filters()
-    app_text <- if (is.null(filters$app_select) || filters$app_select == "") {
-      "all applications in category"
-    } else {
-      filters$app_select
-    }
+    app_text <- if (is.null(filters$app_select) || filters$app_select == "") "all applications in category" else filters$app_select
     tagList(
       h4(style = "color: #2c3e50; font-weight: bold; margin-bottom: 10px;", "Model Use Summary"),
       div(class = "selection-bar",
@@ -740,11 +776,7 @@ server <- function(input, output, session) {
   output$report_tab_content <- renderUI({
     category_row <- selected_category()
     filters <- current_filters()
-    app_text <- if (is.null(filters$app_select) || filters$app_select == "") {
-      "All applications in category"
-    } else {
-      filters$app_select
-    }
+    app_text <- if (is.null(filters$app_select) || filters$app_select == "") "All applications in category" else filters$app_select
     tagList(
       div(class = "section-title", "Application Context"),
       div(class = "report-box",
@@ -782,11 +814,7 @@ server <- function(input, output, session) {
       report_data <- report_table_data()
       active <- active_error_types()
       filters <- current_filters()
-      app_text <- if (is.null(filters$app_select) || filters$app_select == "") {
-        "All applications in category"
-      } else {
-        filters$app_select
-      }
+      app_text <- if (is.null(filters$app_select) || filters$app_select == "") "All applications in category" else filters$app_select
 
       doc <- read_docx() %>% 
         body_add_par("SDM Application & Criteria Report", style = "heading 1") %>%
