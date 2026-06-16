@@ -44,6 +44,7 @@ DEFAULT_FILTERS <- list(
   severity_tolerance = "Medium",
   certainty_tolerance = "Medium"
 )
+FILTER_PROMPT <- 'Please use the sidebar to select your model use-case scenario and click "Filter Criteria" to show the applicable criteria and generate a report.'
 
 repair_mojibake <- function(x) {
   mojibake_pattern <- paste(c("\\u00c3", "\\u00c2", "\\u00e2"), collapse = "|")
@@ -154,13 +155,13 @@ ui <- fluidPage(
     tags$style(HTML("
       th { vertical-align: bottom !important; white-space: normal !important; }
       .dataTables_wrapper { overflow-x: hidden !important; }
-      .glossary-link { color: #2980b9; text-decoration: underline; cursor: pointer; font-weight: 600; }
-      .glossary-link:hover { color: #1a5276; background-color: #ebf5fb; }
       .guide-section { margin-bottom: 6px; padding: 4px 15px; border-left: 5px solid #2c3e50; }
       .guide-section h4 { margin-top: 5px; margin-bottom: 2px; font-weight: bold; }
       .guide-section p, .guide-section ul { margin-bottom: 5px; }
       .centered-intro { text-align: center; margin-bottom: 10px; }
       .centered-intro h3 { margin-bottom: 2px; }
+      .step-heading { font-weight: 700; color: #2c3e50; margin: 14px 0 6px; }
+      .sidebar-title { font-size: 1.2em; margin-top: 0; margin-bottom: 12px; }
       .selection-bar { background-color: #fff3cd; color: #856404; padding: 12px 20px; border: 1px solid #ffeeba; border-radius: 5px; margin-bottom: 15px; font-weight: 500; font-size: 1.05em; }
       .section-title { background-color: #2c3e50; color: white; padding: 10px 15px; border-radius: 5px; margin-bottom: 15px; font-size: 1.1em; font-weight: bold; }
       .custom-legend { text-align: center; margin-top: 5px; margin-bottom: 15px; padding: 8px; background: #f8f9fa; border-radius: 8px; border: 1px solid #ddd; }
@@ -185,75 +186,43 @@ ui <- fluidPage(
     "))
   ),
   theme = bslib::bs_theme(version = 5, bootswatch = "flatly"),
-  titlePanel("SDM Application & Criteria Selector"),
   
   sidebarLayout(
     sidebarPanel(
-      h4("1. Model Application"),
+      h4(class = "sidebar-title", "Select your model use-case scenario"),
+      h4("Model Application"),
       div(class = "risk-note", "Select a broad category to narrow the application list, or select a specific application directly from the full list. The two fields update each other."),
       actionButton("view_applications", "View all applications as table", class = "btn-info w-100"),
       selectInput("cat_select", "Select model application category:", choices = c("Select a category" = "", APPLICATION_CATEGORY_CHOICES), selected = ""),
       selectInput("app_select", "Select model application:", choices = c("All applications in category" = "", APPLICATION_CHOICES), selected = ""),
-      hr(),
       textAreaInput("user_purpose", "Add any further details about the biodiversity conservation application of your model to include in a report of model criteria.", placeholder = "Enter your specific project goals here...", rows = 2),
       hr(),
-      h4("2. Model Type"),
+      h4("Model Type"),
       div(class = "risk-note", "Select whether you are using your SDM for prediction or projection for the selected application."),
       selectInput("type_select", "Select model type:", choices = MODEL_TYPES, selected = "Prediction"),
       hr(),
-      h4("3. Error Tolerance"),
+      h4("Error Tolerance"),
       div(class = "risk-note", "Select how severe the potential effect of model error on the desired application must be before the relevant criterion is included."),
       selectInput("severity_tolerance", "Select error severity tolerance:", choices = SEVERITY_TOLERANCE_CHOICES, selected = "Medium"),
       div(class = "risk-note", "Select how consistently a criterion violation must lead to error before the criterion is included."),
       selectInput("certainty_tolerance", "Select error certainty tolerance:", choices = CERTAINTY_TOLERANCE_CHOICES, selected = "Medium"),
+      hr(),
       actionButton("filter_criteria", "Filter Criteria", class = "btn-primary w-100")
     ),
     
     mainPanel(
       tabsetPanel(
-        tabPanel("Objective & Guidance", br(), uiOutput("full_landing_page")),
+        tabPanel("Overview & Instructions", br(), uiOutput("full_landing_page")),
         tabPanel("Selected use-case scenario", br(), 
                  uiOutput("app_profile_display")),
         tabPanel("Applicable Criteria", br(), 
-                 uiOutput("selection_display_tab3"),
-                 fluidRow(
-                   column(8, 
-                          div(class = "section-title", "Summary of criteria along the model cycle"),
-                          fluidRow(
-                            column(6, div(class = "plot-box", h6(class = "plot-title", "Underprediction Criteria"), plotlyOutput("radar_underprediction", height = "280px"))),
-                            column(6, div(class = "plot-box", h6(class = "plot-title", "Overprediction Criteria"), plotlyOutput("radar_overprediction", height = "280px")))
-                          ),
-                          div(class = "custom-legend",
-                              div(class="legend-item", span(class="legend-box", style=paste0("background:", TOLERANCE_COLORS["High"])), "High"),
-                              div(class="legend-item", span(class="legend-box", style=paste0("background:", TOLERANCE_COLORS["Medium"])), "Medium"),
-                              div(class="legend-item", span(class="legend-box", style=paste0("background:", TOLERANCE_COLORS["Low"])), "Low")
-                          ),
-                          hr(),
-                          div(class = "section-title", "List of criteria (click on any row to display details)"),
-                          uiOutput("criteria_count"),
-                          div(class = "criteria-scroll", uiOutput("criteria_tables_ui"))
-                   ),
-                   column(4, 
-                          div(class = "section-title", "Criterion Details"),
-                          wellPanel(class = "details-box",
-                                    uiOutput("details_panel")))
-                 )
+                 uiOutput("applicable_criteria_tab")
         ),
         tabPanel("Generate a Report", br(),
-                 div(class = "section-title", "Prepared by"),
-                 div(class = "report-box",
-                     fluidRow(
-                       column(4, textInput("user_name", "User's Name:", value = "")),
-                       column(4, textInput("report_date", "Date:", value = Sys.Date())),
-                       column(4, textAreaInput("team_overview", "Overview for my team:", rows = 2))
-                     ),
-                     hr(),
-                     div(class = "report-actions",
-                         downloadButton("download_docx", "Export as .docx", class = "btn-success"),
-                         downloadButton("download_csv", "Export as CSV", class = "btn-info")
-                     )
-                 ),
-                 uiOutput("report_tab_content"))
+                 uiOutput("generate_report_tab")),
+        tabPanel("Glossary", br(),
+                 div(class = "section-title", "Glossary"),
+                 div(class = "profile-box", DTOutput("glossary_table")))
       )
     )
   )
@@ -265,9 +234,97 @@ server <- function(input, output, session) {
   selected_row_data <- reactiveVal(NULL)
   submitted_purpose <- reactiveVal("")
   applied_filters <- reactiveVal(DEFAULT_FILTERS)
+  filters_applied <- reactiveVal(FALSE)
 
   current_filters <- reactive({
     applied_filters()
+  })
+
+  filter_prompt_ui <- function() {
+    div(class = "profile-box", p(em(FILTER_PROMPT)))
+  }
+
+  selected_error_types_ui <- function() {
+    category_row <- selected_category()
+    active <- active_error_types()
+    filters <- current_filters()
+    pathway_df <- data.frame(
+      `Error type` = c("Underprediction", "Overprediction"),
+      Effect = c(category_row$Underprediction_error_effect, category_row$Overprediction_error_effect),
+      Rank = c(category_row$Underprediction_error_severity_rank, category_row$Overprediction_error_severity_rank),
+      Included = c(
+        ifelse("Underprediction" %in% active, "Yes", "No"),
+        ifelse("Overprediction" %in% active, "Yes", "No")
+      ),
+      check.names = FALSE
+    )
+    pathway_table <- tags$table(
+      class = "table table-sm table-striped",
+      tags$thead(tags$tr(lapply(names(pathway_df), tags$th))),
+      tags$tbody(lapply(seq_len(nrow(pathway_df)), function(i) {
+        tags$tr(lapply(pathway_df[i, ], tags$td))
+      }))
+    )
+    tagList(
+      div(class = "section-title", "Selected error type(s)"),
+      div(class = "profile-box profile-box-muted",
+          p("Application severity determines which error pathways are considered before criterion certainty is applied."),
+          p(strong("Selected error severity tolerance: "), severity_tolerance_label(filters$severity_tolerance)),
+          p(strong("Selected error certainty tolerance: "), certainty_tolerance_label(filters$certainty_tolerance)),
+          p(strong("Error Types Considered: "), ifelse(length(active) == 0, "None at this severity tolerance", paste(active, collapse = ", "))),
+          pathway_table,
+          p(strong("Underprediction effect: "), category_row$Underprediction_error_effect, " - ", plain_display_text(category_row$Underprediction_error_effect_definition)),
+          p(strong("Overprediction effect: "), category_row$Overprediction_error_effect, " - ", plain_display_text(category_row$Overprediction_error_effect_definition)))
+    )
+  }
+
+  output$applicable_criteria_tab <- renderUI({
+    if (!filters_applied()) return(filter_prompt_ui())
+    tagList(
+      selected_error_types_ui(),
+      fluidRow(
+        column(8,
+               div(class = "section-title", "List of selected criteria"),
+               p("Click on any row to display details."),
+               div(class = "criteria-scroll", uiOutput("criteria_tables_ui")),
+               hr(),
+               div(class = "section-title", "Summary of applicable criteria along the model cycle"),
+               fluidRow(
+                 column(6, div(class = "plot-box", h6(class = "plot-title", "Underprediction Criteria"), plotlyOutput("radar_underprediction", height = "280px"))),
+                 column(6, div(class = "plot-box", h6(class = "plot-title", "Overprediction Criteria"), plotlyOutput("radar_overprediction", height = "280px")))
+               ),
+               div(class = "custom-legend",
+                   div(class = "legend-item", span(class = "legend-box", style = paste0("background:", TOLERANCE_COLORS["High"])), "High"),
+                   div(class = "legend-item", span(class = "legend-box", style = paste0("background:", TOLERANCE_COLORS["Medium"])), "Medium"),
+                   div(class = "legend-item", span(class = "legend-box", style = paste0("background:", TOLERANCE_COLORS["Low"])), "Low")
+               )
+        ),
+        column(4,
+               div(class = "section-title", "Criterion Details"),
+               wellPanel(class = "details-box",
+                         uiOutput("details_panel")))
+      )
+    )
+  })
+
+  output$generate_report_tab <- renderUI({
+    if (!filters_applied()) return(filter_prompt_ui())
+    tagList(
+      div(class = "section-title", "Prepared by"),
+      div(class = "report-box",
+          fluidRow(
+            column(4, textInput("user_name", "User's Name:", value = "")),
+            column(4, textInput("report_date", "Date:", value = Sys.Date())),
+            column(4, textAreaInput("team_overview", "Overview for my team:", rows = 2))
+          ),
+          hr(),
+          div(class = "report-actions",
+              downloadButton("download_docx", "Export as .docx", class = "btn-success"),
+              downloadButton("download_csv", "Export as CSV", class = "btn-info")
+          )
+      ),
+      uiOutput("report_tab_content")
+    )
   })
 
   rank_at_or_above <- function(rank_value, tolerance) {
@@ -421,22 +478,9 @@ server <- function(input, output, session) {
     )
   }
 
-  create_glossary_links <- function(text) {
+  plain_display_text <- function(text) {
     if (is.null(text) || text == "" || is.na(text) || text == "NA") return("")
-    terms <- glossary$Term
-    terms <- terms[order(nchar(terms), decreasing = TRUE)]
-    processed_text <- text
-    for (term in terms) {
-      escaped_term <- str_replace_all(term, "([.|()\\^{}+$*?\\[\\]\\\\])", "\\\\\\1")
-      pattern <- paste0("(?i)\\b(", escaped_term, ")(s|es)?\\b(?!([^<]*>))")
-      if (str_detect(processed_text, pattern)) {
-        term_js <- gsub("\\\\", "\\\\\\\\", term)
-        term_js <- gsub("'", "\\\\'", term_js, fixed = TRUE)
-        replacement <- paste0("<a class='glossary-link' onclick=\"Shiny.setInputValue('glossary_click', '", term_js, "', {priority: 'event'})\">\\0</a>")
-        processed_text <- str_replace(processed_text, pattern, replacement)
-      }
-    }
-    HTML(processed_text)
+    text
   }
 
   split_semicolon_values <- function(value) {
@@ -450,14 +494,13 @@ server <- function(input, output, session) {
     urls <- split_semicolon_values(app_row[["Citation URL"]])
     if (length(citations) == 0 && length(urls) == 0) return(NULL)
     n_examples <- max(length(citations), length(urls))
-    div(
-      class = "profile-box profile-box-muted",
-      h4(style = "color: #18bc9c; font-size: 1.1em;", "Example application paper"),
+    tagList(
+      p(strong("Example of model application:")),
       tags$ul(lapply(seq_len(n_examples), function(i) {
         citation <- if (i <= length(citations)) citations[i] else "Example paper"
         url <- if (i <= length(urls)) urls[i] else ""
         tags$li(
-          create_glossary_links(citation),
+          plain_display_text(citation),
           if (url != "") tagList(" ", tags$a(href = url, target = "_blank", url)) else NULL
         )
       }))
@@ -513,6 +556,19 @@ server <- function(input, output, session) {
     datatable(table_df, rownames = FALSE, filter = "top", options = list(pageLength = 10, scrollX = TRUE))
   })
 
+  output$glossary_table <- renderDT({
+    glossary_table <- glossary %>%
+      select(-any_of("References")) %>%
+      rename(Example = `Some examples`) %>%
+      arrange(Term) %>%
+      datatable(
+        rownames = FALSE,
+        filter = "top",
+        options = list(pageLength = 15, scrollX = TRUE, autoWidth = TRUE)
+      )
+    glossary_table
+  })
+
   observeEvent(input$filter_criteria, {
     if ((is.null(input$cat_select) || input$cat_select == "") && (is.null(input$app_select) || input$app_select == "")) {
       showNotification("Select an application category or a model application before filtering criteria.", type = "warning")
@@ -533,22 +589,41 @@ server <- function(input, output, session) {
       certainty_tolerance = input$certainty_tolerance
     ))
     submitted_purpose(input$user_purpose)
+    filters_applied(TRUE)
     selected_row_data(NULL)
   })
 
   output$full_landing_page <- renderUI({
     req(landing_lines)
-    format_line <- function(line, idx) {
-      if (idx == 1) return(div(class = "centered-intro", h3(create_glossary_links(line))))
-      if (line %in% c("Overview", "Instructions") || str_detect(line, "^Step [A-Z]")) {
-        return(div(class = "guide-section", h4(create_glossary_links(line))))
-      }
-      tags$p(create_glossary_links(line))
+    is_major_heading <- function(line) line %in% c("Overview", "Instructions")
+    is_step_heading <- function(line) str_detect(line, "^Step [0-9A-Z]")
+    elements <- list(div(class = "centered-intro", h3(landing_lines[1])))
+    section_lines <- character(0)
+    flush_section <- function(lines) {
+      if (length(lines) == 0) return(NULL)
+      div(class = "profile-box", lapply(lines, function(line) tags$p(plain_display_text(line))))
     }
-    tagList(map2(landing_lines, seq_along(landing_lines), format_line))
+
+    for (line in landing_lines[-1]) {
+      if (is_major_heading(line) || is_step_heading(line)) {
+        elements <- append(elements, list(flush_section(section_lines)))
+        heading <- if (is_step_heading(line)) {
+          div(class = "step-heading", plain_display_text(line))
+        } else {
+          div(class = "section-title", plain_display_text(line))
+        }
+        elements <- append(elements, list(heading))
+        section_lines <- character(0)
+      } else {
+        section_lines <- c(section_lines, line)
+      }
+    }
+    elements <- append(elements, list(flush_section(section_lines)))
+    tagList(compact(elements))
   })
 
   output$selection_display_tab2 <- renderUI({
+    if (!filters_applied()) return(filter_prompt_ui())
     filters <- current_filters()
     req(filters$cat_select, filters$type_select, filters$severity_tolerance, filters$certainty_tolerance)
     app_text <- if (is.null(filters$app_select) || filters$app_select == "") "all applications in category" else filters$app_select
@@ -565,81 +640,35 @@ server <- function(input, output, session) {
   })
 
   output$app_profile_display <- renderUI({
+    if (!filters_applied()) return(filter_prompt_ui())
     category_row <- selected_category()
     apps_for_category <- selected_applications()
     selected_app <- selected_application()
-    active <- active_error_types()
     filters <- current_filters()
-    pathway_df <- data.frame(
-      `Error type` = c("Underprediction", "Overprediction"),
-      Effect = c(category_row$Underprediction_error_effect, category_row$Overprediction_error_effect),
-      Rank = c(category_row$Underprediction_error_severity_rank, category_row$Overprediction_error_severity_rank),
-      Included = c(
-        ifelse("Underprediction" %in% active, "Yes", "No"),
-        ifelse("Overprediction" %in% active, "Yes", "No")
-      ),
-      check.names = FALSE
-    )
-    pathway_table <- tags$table(
-      class = "table table-sm table-striped",
-      tags$thead(tags$tr(lapply(names(pathway_df), tags$th))),
-      tags$tbody(lapply(seq_len(nrow(pathway_df)), function(i) {
-        tags$tr(lapply(pathway_df[i, ], tags$td))
-      }))
-    )
     tagList(
+      div(class = "section-title", "Description of selected use-case scenario"),
       div(class = "profile-box",
-          h3(style = "color: #2c3e50; border-bottom: 2px solid #2c3e50;", "Applied Scenario"),
-          p(strong("Application Category: "), category_row$Application_category),
-          p(strong("Selected Application: "), ifelse(is.null(filters$app_select) || filters$app_select == "", "All applications in category", filters$app_select)),
-          p(strong("Model Type: "), filters$type_select),
-          p(strong("Error Severity Tolerance: "), severity_tolerance_label(filters$severity_tolerance)),
-          p(strong("Error Certainty Tolerance: "), certainty_tolerance_label(filters$certainty_tolerance)),
-          p(strong("Error Types Considered: "), ifelse(length(active) == 0, "None at this severity tolerance", paste(active, collapse = ", ")))),
-      div(class = "profile-box profile-box-muted",
-          h4(style = "color: #18bc9c;", "Application Category"),
-          p(strong("Question: "), create_glossary_links(category_row$Question)),
-          p(strong("Action: "), create_glossary_links(category_row$Action))),
-      if (!is.null(selected_app)) div(class = "profile-box profile-box-purpose",
-          h4(style = "color: #16a085; font-size: 1.1em;", "Selected Model Application"),
-          p(strong(selected_app$Application)),
-          p(create_glossary_links(selected_app$Description))),
-      if (!is.null(selected_app)) render_application_examples(selected_app),
-      div(class = "profile-box",
-          h4(style = "color: #2c3e50; font-size: 1.1em;", "Error Pathway Logic"),
-          p("Application severity determines which error pathways are considered before criterion certainty is applied."),
-          pathway_table,
-          p(strong("Underprediction effect: "), category_row$Underprediction_error_effect, " - ", create_glossary_links(category_row$Underprediction_error_effect_definition)),
-          p(strong("Overprediction effect: "), category_row$Overprediction_error_effect, " - ", create_glossary_links(category_row$Overprediction_error_effect_definition))),
-      if (submitted_purpose() != "") div(class = "profile-box profile-box-purpose",
-                                         h4(style = "color: #16a085; font-size: 1.1em;", "Report Details"),
-                                         p(style = "font-style: italic;", submitted_purpose())),
+          p("The use-case scenario is the combination of model application, model type, and error tolerance, as determined by the user."),
+          p(strong("Selected application category: "), category_row$Application_category),
+          tags$ul(
+            tags$li(strong("Conservation decision: "), plain_display_text(category_row$Question)),
+            tags$li(strong("SDM use description: "), plain_display_text(category_row$Action))
+          ),
+          if (!is.null(selected_app)) tagList(
+            p(strong("Model application: "), selected_app$Application),
+            p(strong("Model application description: "), plain_display_text(selected_app$Description)),
+            render_application_examples(selected_app)
+          ),
+          p(strong("Model type: "), filters$type_select),
+          if (submitted_purpose() != "") tagList(
+            h4(style = "color: #2c3e50; font-size: 1.1em;", "Report Details"),
+            p(style = "font-style: italic;", submitted_purpose())
+          )),
+      div(class = "section-title", "Other applications in this category"),
       div(class = "profile-box profile-box-info",
-          h4(style = "color: #2980b9; font-size: 1.1em;", "Other applications in this category"),
           tags$ul(lapply(seq_len(nrow(apps_for_category)), function(i) {
-            tags$li(tags$strong(apps_for_category$Application[i]), ": ", create_glossary_links(apps_for_category$Description[i]))
+            tags$li(tags$strong(apps_for_category$Application[i]), ": ", plain_display_text(apps_for_category$Description[i]))
           })))
-    )
-  })
-
-  output$selection_display_tab3 <- renderUI({
-    category_row <- selected_category()
-    active <- active_error_types()
-    filters <- current_filters()
-    app_text <- if (is.null(filters$app_select) || filters$app_select == "") "all applications in category" else filters$app_select
-    tagList(
-      h4(style = "color: #2c3e50; font-weight: bold; margin-bottom: 10px;", "Model Use Summary"),
-      div(class = "selection-bar",
-          paste0("You have selected: ", filters$cat_select, " (", app_text, ") + ", filters$type_select),
-          div(style = "margin-top: 10px; font-weight: normal; font-size: 0.9em; border-top: 1px solid rgba(0,0,0,0.1); padding-top: 10px;",
-              strong("Severity tolerance: "), severity_tolerance_label(filters$severity_tolerance), br(),
-              strong("Certainty tolerance: "), certainty_tolerance_label(filters$certainty_tolerance), br(),
-              strong("Underprediction severity: "), category_row$Underprediction_error_effect, " (", category_row$Underprediction_error_severity_rank, ")", br(),
-              strong("Overprediction severity: "), category_row$Overprediction_error_effect, " (", category_row$Overprediction_error_severity_rank, ")", br(),
-              strong("Error types considered: "), ifelse(length(active) == 0, "None", paste(active, collapse = ", "))
-          )
-      ),
-      h4(style = "color: #2c3e50; font-weight: bold; margin-top: 20px; border-bottom: 2px solid #18bc9c; padding-bottom: 5px;", "Criteria selected based on application severity and criterion certainty")
     )
   })
 
@@ -655,17 +684,28 @@ server <- function(input, output, session) {
     if (nrow(data) == 0) {
       return(render_empty_plot(paste("No", tolower(error_type), "criteria selected")))
     }
+    data <- data %>%
+      arrange(Model_stage) %>%
+      bind_rows(slice(., 1))
     plot_ly(
       data,
-      x = ~Model_stage,
-      y = ~n,
-      type = "bar",
-      marker = list(color = "#18bc9c")
+      r = ~n,
+      theta = ~Model_stage,
+      type = "scatterpolar",
+      mode = "lines+markers",
+      fill = "toself",
+      line = list(color = "#18bc9c"),
+      marker = list(color = "#18bc9c", size = 6),
+      fillcolor = "rgba(24, 188, 156, 0.25)",
+      hovertemplate = "%{theta}<br>Criteria: %{r}<extra></extra>"
     ) %>%
       layout(
-        xaxis = list(title = "", tickangle = -25),
-        yaxis = list(title = "Criteria"),
-        margin = list(l = 40, r = 20, t = 10, b = 90)
+        polar = list(
+          radialaxis = list(visible = TRUE, rangemode = "tozero", tickfont = list(size = 10)),
+          angularaxis = list(tickfont = list(size = 10))
+        ),
+        showlegend = FALSE,
+        margin = list(l = 35, r = 35, t = 10, b = 35)
       )
   }
 
@@ -687,28 +727,17 @@ server <- function(input, output, session) {
   }
 
   output$radar_underprediction <- renderPlotly({
+    req(filters_applied())
     render_stage_plot("Underprediction")
   })
 
   output$radar_overprediction <- renderPlotly({
+    req(filters_applied())
     render_stage_plot("Overprediction")
   })
 
-  output$criteria_count <- renderUI({
-    filters <- current_filters()
-    filtered_count <- nrow(filtered_data())
-    div(
-      class = "criteria-count",
-      paste0(
-        "Showing ", filtered_count, " of ", nrow(criteria_df),
-        " criteria for ", filters$type_select,
-        " models at ", certainty_tolerance_label(filters$certainty_tolerance),
-        " certainty."
-      )
-    )
-  })
-
   output$criteria_tables_ui <- renderUI({
+    if (!filters_applied()) return(NULL)
     data <- filtered_data()
     if(nrow(data) == 0) {
       return(div(class = "empty-state", "No criteria match this combination. Try lowering the severity or certainty tolerance, or selecting another model type."))
@@ -723,6 +752,7 @@ server <- function(input, output, session) {
   })
 
   observe({
+    req(filters_applied())
     data <- filtered_data()
     for (s in unique(data$Model_stage)) {
       local({
@@ -733,10 +763,9 @@ server <- function(input, output, session) {
             transmute(
               Criterion,
               Underprediction = mapply(display_certainty, Underprediction_certainty, Underprediction_selected),
-              Overprediction = mapply(display_certainty, Overprediction_certainty, Overprediction_selected),
-              Match_reason
+              Overprediction = mapply(display_certainty, Overprediction_certainty, Overprediction_selected)
             )
-          datatable(df_subset, selection = 'single', rownames = FALSE, options = list(dom = 't', paging = FALSE, columnDefs = list(list(width = '35%', targets = 0), list(width = '20%', targets = 1), list(width = '20%', targets = 2), list(width = '25%', targets = 3)))) %>%
+          datatable(df_subset, selection = 'single', rownames = FALSE, options = list(dom = 't', paging = FALSE, columnDefs = list(list(width = '50%', targets = 0), list(width = '25%', targets = 1), list(width = '25%', targets = 2)))) %>%
             formatStyle('Underprediction', backgroundColor = styleEqual(names(CERTAINTY_COLORS), CERTAINTY_COLORS)) %>%
             formatStyle('Overprediction', backgroundColor = styleEqual(names(CERTAINTY_COLORS), CERTAINTY_COLORS))
         })
@@ -749,6 +778,7 @@ server <- function(input, output, session) {
   })
 
   report_table_data <- reactive({
+    req(filters_applied())
     data <- filtered_data()
     if (nrow(data) == 0) {
       return(data.frame(Message = "No criteria match the current selections."))
@@ -774,6 +804,7 @@ server <- function(input, output, session) {
   })
 
   output$report_tab_content <- renderUI({
+    if (!filters_applied()) return(filter_prompt_ui())
     category_row <- selected_category()
     filters <- current_filters()
     app_text <- if (is.null(filters$app_select) || filters$app_select == "") "All applications in category" else filters$app_select
@@ -800,16 +831,19 @@ server <- function(input, output, session) {
   })
 
   output$radar_underprediction_report <- renderPlotly({
+    req(filters_applied())
     render_stage_plot("Underprediction")
   })
 
   output$radar_overprediction_report <- renderPlotly({
+    req(filters_applied())
     render_stage_plot("Overprediction")
   })
 
   output$download_docx <- downloadHandler(
     filename = function() { paste("SDM-Report-", Sys.Date(), ".docx", sep="") },
     content = function(file) {
+      req(filters_applied())
       category_row <- selected_category()
       report_data <- report_table_data()
       active <- active_error_types()
@@ -851,10 +885,14 @@ server <- function(input, output, session) {
 
   output$download_csv <- downloadHandler(
     filename = function() { paste("SDM-Criteria-", Sys.Date(), ".csv", sep="") },
-    content = function(file) { write.csv(report_table_data(), file, row.names = FALSE) }
+    content = function(file) {
+      req(filters_applied())
+      write.csv(report_table_data(), file, row.names = FALSE)
+    }
   )
 
   output$details_panel <- renderUI({
+    if (!filters_applied()) return(p(em(FILTER_PROMPT)))
     res <- selected_row_data()
     if (is.null(res)) return(p(em("Click a criterion to view details.")))
     filters <- current_filters()
@@ -863,21 +901,16 @@ server <- function(input, output, session) {
       p(strong("Criterion: "), res$Criterion),
       p(strong("Model Stage: "), res$Model_stage),
       p(strong("Model Step: "), res$Model_step),
-      p(strong("Description:"), br(), create_glossary_links(res$Description)),
-      p(strong(style="color: #d63384;", "Violation:"), br(), div(style="font-size: 0.85em; background-color: #fff0f7; padding: 8px; border-left: 4px solid #d63384;", create_glossary_links(res$Violation))),
+      p(strong("Description:"), br(), plain_display_text(res$Description)),
+      p(strong(style="color: #d63384;", "Violation:"), br(), div(style="font-size: 0.85em; background-color: #fff0f7; padding: 8px; border-left: 4px solid #d63384;", plain_display_text(res$Violation))),
       p(strong("Selected Error Pathway:"), br(), res$Match_reason),
       p(strong("Underprediction Certainty: "), res$Underprediction_certainty),
       p(strong("Overprediction Certainty: "), res$Overprediction_certainty),
-      if (!is.na(justification) && justification != "") p(strong("Justification:"), br(), create_glossary_links(justification)),
-      p(strong(style="color: #27ae60;", "Potential Solutions:"), br(), div(style="font-size: 0.85em; background-color: #f4fdf7; padding: 8px; border-left: 4px solid #27ae60;", create_glossary_links(res$Solutions)))
+      if (!is.na(justification) && justification != "") p(strong("Justification:"), br(), plain_display_text(justification)),
+      p(strong(style="color: #27ae60;", "Potential Solutions:"), br(), div(style="font-size: 0.85em; background-color: #f4fdf7; padding: 8px; border-left: 4px solid #27ae60;", plain_display_text(res$Solutions)))
     )
   })
 
-  observeEvent(input$glossary_click, {
-    term_info <- glossary %>% filter(Term == input$glossary_click) %>% slice(1)
-    req(nrow(term_info) > 0)
-    showModal(modalDialog(title = term_info$Term, p(term_info$Definition), easyClose = TRUE))
-  })
 }
 
 shinyApp(ui = ui, server = server)
