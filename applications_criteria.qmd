@@ -28,15 +28,14 @@ TOLERANCE_LEVELS <- c("High", "Medium", "Low")
 SEVERITY_TOLERANCE_CHOICES <- c("Correctness (high tolerance)" = "High", "Quality (medium tolerance)" = "Medium", "Efficiency (low tolerance)" = "Low")
 CERTAINTY_TOLERANCE_CHOICES <- c("Always (high tolerance)" = "High", "Sometimes (medium tolerance)" = "Medium", "Rarely (low tolerance)" = "Low")
 TOLERANCE_COLORS <- c("High" = "#ffb3b3", "Medium" = "#ffffcc", "Low" = "#c2f0c2")
-TOLERANCE_BORDER_COLORS <- c("High" = "#d32f2f", "Medium" = "#fbc02d", "Low" = "#388e3c")
 CERTAINTY_COLORS <- c(
   "Always" = unname(TOLERANCE_COLORS["High"]),
   "Sometimes" = unname(TOLERANCE_COLORS["Medium"]),
   "Rarely" = unname(TOLERANCE_COLORS["Low"])
 )
-ERROR_TYPES <- c("Underprediction", "Overprediction")
 APPLICATION_CATEGORY_CHOICES <- sort(unique(application_categories$Application_category))
 APPLICATION_CHOICES <- sort(unique(application_inventory$Application))
+MODEL_STAGE_LEVELS <- unique(criteria_df$Model_stage)
 DEFAULT_FILTERS <- list(
   cat_select = "",
   app_select = "",
@@ -111,7 +110,7 @@ validate_columns(
   "Criteria - Criteria_error.csv"
 )
 
-validate_columns(glossary, c("Term", "Definition"), "glossary_app.csv")
+validate_columns(glossary, c("Term", "Definition", "Some examples"), "glossary_app.csv")
 
 application_inventory <- repair_text_columns(application_inventory)
 application_categories <- repair_text_columns(application_categories)
@@ -155,14 +154,10 @@ ui <- fluidPage(
     tags$style(HTML("
       th { vertical-align: bottom !important; white-space: normal !important; }
       .dataTables_wrapper { overflow-x: hidden !important; }
-      .guide-section { margin-bottom: 6px; padding: 4px 15px; border-left: 5px solid #2c3e50; }
-      .guide-section h4 { margin-top: 5px; margin-bottom: 2px; font-weight: bold; }
-      .guide-section p, .guide-section ul { margin-bottom: 5px; }
       .centered-intro { text-align: center; margin-bottom: 10px; }
       .centered-intro h3 { margin-bottom: 2px; }
       .step-heading { font-weight: 700; color: #2c3e50; margin: 14px 0 6px; }
       .sidebar-title { font-size: 1.2em; margin-top: 0; margin-bottom: 12px; }
-      .selection-bar { background-color: #fff3cd; color: #856404; padding: 12px 20px; border: 1px solid #ffeeba; border-radius: 5px; margin-bottom: 15px; font-weight: 500; font-size: 1.05em; }
       .section-title { background-color: #2c3e50; color: white; padding: 10px 15px; border-radius: 5px; margin-bottom: 15px; font-size: 1.1em; font-weight: bold; }
       .custom-legend { text-align: center; margin-top: 5px; margin-bottom: 15px; padding: 8px; background: #f8f9fa; border-radius: 8px; border: 1px solid #ddd; }
       .legend-item { display: inline-block; margin: 0 12px; font-size: 0.8em; font-weight: bold; }
@@ -171,7 +166,6 @@ ui <- fluidPage(
       .profile-box { border: 1px solid #dee2e6; padding: 15px; border-radius: 8px; background-color: #ffffff; margin-bottom: 15px; }
       .profile-box-muted { background-color: #f8f9fa; }
       .profile-box-info { background-color: #e8f4f8; }
-      .profile-box-purpose { background-color: #e8f8f5; border-left: 5px solid #1abc9c; }
       .plot-box { background-color: #ffffff; border: 1px solid #ddd; padding: 5px; border-radius: 8px; margin-bottom: 10px; }
       .plot-title { text-align: center; font-weight: bold; margin-bottom: 0; font-size: 0.8em; }
       .criteria-scroll { height: 40vh; overflow-y: auto; padding-right: 5px; }
@@ -622,23 +616,6 @@ server <- function(input, output, session) {
     tagList(compact(elements))
   })
 
-  output$selection_display_tab2 <- renderUI({
-    if (!filters_applied()) return(filter_prompt_ui())
-    filters <- current_filters()
-    req(filters$cat_select, filters$type_select, filters$severity_tolerance, filters$certainty_tolerance)
-    app_text <- if (is.null(filters$app_select) || filters$app_select == "") "all applications in category" else filters$app_select
-    div(
-      class = "selection-bar",
-      paste0(
-        "You have selected: ", filters$cat_select,
-        " (", app_text, ")",
-        " + ", filters$type_select,
-        " + severity tolerance: ", severity_tolerance_label(filters$severity_tolerance),
-        " + certainty tolerance: ", certainty_tolerance_label(filters$certainty_tolerance)
-      )
-    )
-  })
-
   output$app_profile_display <- renderUI({
     if (!filters_applied()) return(filter_prompt_ui())
     category_row <- selected_category()
@@ -678,14 +655,15 @@ server <- function(input, output, session) {
       return(render_empty_plot(paste(error_type, "is not considered at this severity tolerance")))
     }
     selected_flag <- paste0(error_type, "_selected")
-    data <- filtered_data() %>%
+    data_counts <- filtered_data() %>%
       filter(.data[[selected_flag]]) %>%
       count(Model_stage, name = "n")
-    if (nrow(data) == 0) {
+    if (nrow(data_counts) == 0) {
       return(render_empty_plot(paste("No", tolower(error_type), "criteria selected")))
     }
-    data <- data %>%
-      arrange(Model_stage) %>%
+    data <- data.frame(Model_stage = MODEL_STAGE_LEVELS, stringsAsFactors = FALSE) %>%
+      left_join(data_counts, by = "Model_stage") %>%
+      mutate(n = ifelse(is.na(n), 0, n)) %>%
       bind_rows(slice(., 1))
     plot_ly(
       data,
@@ -808,20 +786,23 @@ server <- function(input, output, session) {
     category_row <- selected_category()
     filters <- current_filters()
     app_text <- if (is.null(filters$app_select) || filters$app_select == "") "All applications in category" else filters$app_select
+    active <- active_error_types()
     tagList(
-      div(class = "section-title", "Application Context"),
+      div(class = "section-title", "Selected use-case scenario"),
       div(class = "report-box",
-          h4(style="color: #2c3e50; margin-top:0;", paste("Category:", filters$cat_select)),
-          p(strong("Selected Application: "), app_text),
-          p(strong("Selected Model Type: "), filters$type_select),
-          p(strong("Severity Tolerance: "), severity_tolerance_label(filters$severity_tolerance)),
-          p(strong("Certainty Tolerance: "), certainty_tolerance_label(filters$certainty_tolerance)),
-          p(strong("Underprediction Severity: "), category_row$Underprediction_error_effect, " (", category_row$Underprediction_error_severity_rank, ")"),
-          p(strong("Overprediction Severity: "), category_row$Overprediction_error_effect, " (", category_row$Overprediction_error_severity_rank, ")"),
-          p(strong("Team Overview: "), input$team_overview)),
-      div(class = "section-title", "The purpose of my model application"),
-      div(class = "report-box", if(submitted_purpose() == "") p(em("No purpose described.")) else p(submitted_purpose())),
-      div(class = "section-title", "Relevant criteria for your application"),
+          p(strong("Selected application category: "), filters$cat_select),
+          p(strong("Model application: "), app_text),
+          p(strong("Model type: "), filters$type_select),
+          p(strong("Selected error severity tolerance: "), severity_tolerance_label(filters$severity_tolerance)),
+          p(strong("Selected error certainty tolerance: "), certainty_tolerance_label(filters$certainty_tolerance)),
+          p(strong("Selected error type(s): "), ifelse(length(active) == 0, "None", paste(active, collapse = ", "))),
+          p(strong("Underprediction effect: "), category_row$Underprediction_error_effect, " (", category_row$Underprediction_error_severity_rank, ")"),
+          p(strong("Overprediction effect: "), category_row$Overprediction_error_effect, " (", category_row$Overprediction_error_severity_rank, ")")),
+      div(class = "section-title", "User-provided model application details"),
+      div(class = "report-box",
+          if(submitted_purpose() == "") p(em("No additional application details provided.")) else p(submitted_purpose()),
+          p(strong("Team overview: "), ifelse(is.null(input$team_overview) || input$team_overview == "", "N/A", input$team_overview))),
+      div(class = "section-title", "Selected criteria"),
       div(class = "report-box",
           div(class = "criteria-count", paste0("Showing ", nrow(filtered_data()), " criteria.")),
           fluidRow(column(6, h6("Underprediction Criteria", align="center"), plotlyOutput("radar_underprediction_report", height = "280px")), column(6, h6("Overprediction Criteria", align="center"), plotlyOutput("radar_overprediction_report", height = "280px"))),
@@ -856,25 +837,25 @@ server <- function(input, output, session) {
         body_add_par(paste("Report Date:", input$report_date), style = "Normal") %>%
         body_add_par("", style = "Normal") %>%
         
-        body_add_par("1. Application Context", style = "heading 2") %>%
-        body_add_par(paste("Application Category:", filters$cat_select), style = "Normal") %>%
-        body_add_par(paste("Selected Application:", app_text), style = "Normal") %>%
-        body_add_par(paste("Selected Model Type:", filters$type_select), style = "Normal") %>%
-        body_add_par(paste("Severity Tolerance:", severity_tolerance_label(filters$severity_tolerance)), style = "Normal") %>%
-        body_add_par(paste("Certainty Tolerance:", certainty_tolerance_label(filters$certainty_tolerance)), style = "Normal") %>%
-        body_add_par(paste("Error Types Considered:", ifelse(length(active) == 0, "None", paste(active, collapse = ", "))), style = "Normal") %>%
-        body_add_par(paste("Underprediction Severity:", category_row$Underprediction_error_effect, "(", category_row$Underprediction_error_severity_rank, ")"), style = "Normal") %>%
-        body_add_par(paste("Overprediction Severity:", category_row$Overprediction_error_effect, "(", category_row$Overprediction_error_severity_rank, ")"), style = "Normal") %>%
+        body_add_par("1. Selected use-case scenario", style = "heading 2") %>%
+        body_add_par(paste("Selected application category:", filters$cat_select), style = "Normal") %>%
+        body_add_par(paste("Model application:", app_text), style = "Normal") %>%
+        body_add_par(paste("Model type:", filters$type_select), style = "Normal") %>%
+        body_add_par(paste("Selected error severity tolerance:", severity_tolerance_label(filters$severity_tolerance)), style = "Normal") %>%
+        body_add_par(paste("Selected error certainty tolerance:", certainty_tolerance_label(filters$certainty_tolerance)), style = "Normal") %>%
+        body_add_par(paste("Selected error type(s):", ifelse(length(active) == 0, "None", paste(active, collapse = ", "))), style = "Normal") %>%
+        body_add_par(paste("Underprediction effect:", category_row$Underprediction_error_effect, "(", category_row$Underprediction_error_severity_rank, ")"), style = "Normal") %>%
+        body_add_par(paste("Overprediction effect:", category_row$Overprediction_error_effect, "(", category_row$Overprediction_error_severity_rank, ")"), style = "Normal") %>%
         body_add_par("", style = "Normal") %>%
         
-        body_add_par("2. Purpose of Model Application", style = "heading 2") %>%
-        body_add_par(ifelse(submitted_purpose() == "", "No specific purpose provided.", submitted_purpose()), style = "Normal") %>%
+        body_add_par("2. User-provided model application details", style = "heading 2") %>%
+        body_add_par(ifelse(submitted_purpose() == "", "No additional application details provided.", submitted_purpose()), style = "Normal") %>%
         body_add_par("", style = "Normal") %>%
-        body_add_par("Team Overview / Project Context:", style = "heading 3") %>%
+        body_add_par("Team overview:", style = "heading 3") %>%
         body_add_par(ifelse(input$team_overview == "", "N/A", input$team_overview), style = "Normal") %>%
         body_add_par("", style = "Normal") %>%
         
-        body_add_par("3. Recommended Criteria", style = "heading 2") %>%
+        body_add_par("3. Selected criteria", style = "heading 2") %>%
         body_add_par(paste("Number of criteria included:", nrow(filtered_data())), style = "Normal") %>%
         body_add_par("", style = "Normal") %>%
         body_add_table(report_data, style = "table_template")
