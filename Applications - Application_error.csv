@@ -1,4 +1,0 @@
-Error_effect,Definition,Error_effect_rank
-Correctness,"Error can change a categorical decision, classification, trigger, or substantive conclusion",High
-Quality,"Error degrades accuracy, precision, defensibility, or ecological usefulness without necessarily changing the direction of a conservation decision",Medium
-Efficiency,"Error mainly causes unnecessary cost, effort, review, restriction, or opportunity loss while the main decision remains acceptable",Low
