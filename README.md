@@ -15,8 +15,11 @@ The app applies filters only after the user clicks `Filter Criteria`.
 
 ## Files
 
-- `applications_criteria.qmd` contains the Quarto Shiny app.
-- `validate_app_data.R` validates required CSV columns and lookup-table values.
+In the `app` folder, the `global.R`, `ui.R`, and `server.R` files contain the
+Shiny app code.
+
+The `app/data` folder contains the following files:
+
 - `tab1_landing_page_intro.docx` provides the landing-page text for the
   `Overview & Instructions` tab.
 - `Applications - Application_inventory.csv` lists specific model applications,
@@ -33,26 +36,28 @@ The app applies filters only after the user clicks `Filter Criteria`.
   certainty ranks.
 - `glossary_app.csv` defines glossary terms, definitions, and examples shown in
   the `Glossary` tab.
-- `LICENSE` contains the project license.
 
 ## Running the App
 
-Open `applications_criteria.qmd` in Positron or RStudio and run the Shiny
-document. The app expects the CSV and DOCX files listed above to be in the same
-folder as the QMD file.
+Before running the app, make sure you have the required packages installed. You can install them using the following command:
 
-Required R packages:
+```R
+install.packages(
+    c("bslib", "dplyr", "DT", "officer", "plotly", "purrr", "rmarkdown", 
+    "shiny", "stringr"))
+```
 
-- `shiny`
-- `dplyr`
-- `DT`
-- `purrr`
-- `plotly`
-- `stringr`
-- `officer`
-- `bslib`
+To run the app, you can use the following command in your R console:
 
-To validate the lookup tables before running the app:
+```R
+shiny::runApp("app")
+```
+
+This will launch the Shiny application in your default web browser.
+
+The app expects the CSV and DOCX files listed above to be in the `app/data` folder.
+
+To validate the lookup tables before running the app, use the functions defined in `validate_app_data.R`:
 
 ```r
 source("validate_app_data.R")
@@ -153,3 +158,7 @@ Lookup-table values:
   exist in `Applications - Application_error.csv`.
 - Criterion certainty values in `Criteria - Criteria.csv` must exist in
   `Criteria - Criteria_error.csv`.
+
+## License
+
+[MIT License](./LICENSE)
