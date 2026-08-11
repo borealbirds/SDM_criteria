@@ -20,6 +20,22 @@ ui <- fluidPage(
       .plot-box { background-color: #ffffff; border: 1px solid #ddd; padding: 5px; border-radius: 8px; margin-bottom: 10px; }
       .plot-title { text-align: center; font-weight: bold; margin-bottom: 0; font-size: 0.8em; }
       .criteria-scroll { height: 40vh; overflow-y: auto; padding-right: 5px; }
+      .criteria-table { border: 1px solid #d8dee3; border-radius: 5px; overflow: hidden; margin-bottom: 16px; }
+      .criteria-grid-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(90px, 1fr) minmax(90px, 1fr); align-items: stretch; }
+      .criteria-grid-header { background: #f1f3f5; color: #2c3e50; font-size: 0.78em; font-weight: 700; }
+      .criteria-grid-cell { min-width: 0; padding: 8px 10px; border-right: 1px solid #d8dee3; overflow-wrap: anywhere; }
+      .criteria-grid-cell:last-child { border-right: 0; }
+      .criterion-core-row { border-top: 1px solid #d8dee3; }
+      .criterion-core-row:first-of-type { border-top: 0; }
+      .criterion-name-button { appearance: none; border: 0; background: transparent; color: #176b87; padding: 0; text-align: left; font-weight: 600; line-height: 1.35; cursor: pointer; }
+      .criterion-name-button:hover, .criterion-name-button:focus { color: #0d4f66; text-decoration: underline; }
+      .criterion-type-label { display: inline-block; margin-left: 6px; padding: 1px 5px; border: 1px solid #9aa5ad; border-radius: 3px; color: #5a646b; font-size: 0.68em; font-weight: 700; vertical-align: 1px; }
+      .certainty-cell { display: flex; align-items: center; justify-content: center; font-size: 0.82em; font-weight: 600; text-align: center; }
+      .related-criteria { border-top: 1px solid #e5e8eb; background: #f8fafb; }
+      .related-criteria summary { cursor: pointer; padding: 7px 10px; color: #3f4b52; font-size: 0.8em; font-weight: 600; }
+      .related-criteria-list { margin: 0; padding: 0 10px 8px 30px; }
+      .related-criteria-list li { margin: 5px 0; padding-left: 2px; }
+      .relationship-label { margin-left: 6px; color: #66737b; font-size: 0.76em; }
       .details-box { height: 85vh; overflow-y: auto; background-color: #fcfcfc; border: 1px solid #ddd; border-top: 5px solid #18bc9c; padding: 15px; }
       .empty-state { padding: 16px; border: 1px dashed #bbb; border-radius: 8px; color: #666; background-color: #fafafa; }
       .criteria-count { margin-bottom: 12px; color: #2c3e50; font-weight: 600; }
@@ -28,6 +44,23 @@ ui <- fluidPage(
       .well .form-group { margin-bottom: 8px !important; }
       .well hr { margin-top: 10px !important; margin-bottom: 10px !important; }
       .well h4 { margin-bottom: 5px !important; font-size: 1.1em; }
+      @media (max-width: 767px) {
+        .criteria-grid-row { grid-template-columns: minmax(0, 1fr) 86px 86px; }
+        .criteria-grid-cell { padding: 7px 6px; }
+        .criteria-scroll { height: auto; max-height: 65vh; }
+        .details-box { height: auto; max-height: 70vh; }
+      }
+    "
+        )),
+        tags$script(HTML(
+            "
+      $(document).on('click', '.criterion-select', function() {
+        Shiny.setInputValue('criterion_selection', {
+          criterion_type: String($(this).data('criterion-type')),
+          criterion_id: String($(this).data('criterion-id')),
+          nonce: Math.random()
+        }, {priority: 'event'});
+      });
     "
         ))
     ),

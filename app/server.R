@@ -5,6 +5,29 @@ server <- function(input, output, session) {
     applied_filters <- reactiveVal(DEFAULT_FILTERS)
     filters_applied <- reactiveVal(FALSE)
 
+    split_criteria_ids <- function(value) {
+        if (length(value) == 0 || is.na(value) || trimws(value) == "") {
+            return(character())
+        }
+        trimws(strsplit(as.character(value), ",", fixed = TRUE)[[1]])
+    }
+
+    paths_to_core <- function(value, core_id) {
+        if (length(value) == 0 || is.na(value) || trimws(value) == "") {
+            return(character())
+        }
+        paths <- trimws(strsplit(value, ";", fixed = TRUE)[[1]])
+        paths[vapply(paths, function(path) {
+            nodes <- trimws(strsplit(path, ">", fixed = TRUE)[[1]])
+            length(nodes) >= 2 && tail(nodes, 1) == as.character(core_id)
+        }, logical(1))]
+    }
+
+    collapse_unique <- function(values) {
+        values <- unique(values[!is.na(values) & trimws(values) != ""])
+        paste(values, collapse = "; ")
+    }
+
     current_filters <- reactive({
         applied_filters()
     })
@@ -93,8 +116,10 @@ server <- function(input, output, session) {
             fluidRow(
                 column(
                     8,
-                    div(class = "section-title", "List of selected criteria"),
-                    p("Click on any row to display details."),
+                    div(class = "section-title", "List of applicable criteria"),
+                    p(
+                        "Select a core criterion or related special case to display details."
+                    ),
                     div(
                         class = "criteria-scroll",
                         uiOutput("criteria_tables_ui")
@@ -316,24 +341,6 @@ server <- function(input, output, session) {
         app_row
     })
 
-    selected_certainty_columns <- reactive({
-        filters <- current_filters()
-        req(filters$type_select)
-        model_prefix <- tolower(filters$type_select)
-        c(
-            underprediction = paste0(
-                "Underprediction_",
-                model_prefix,
-                "_error_certainty"
-            ),
-            overprediction = paste0(
-                "Overprediction_",
-                model_prefix,
-                "_error_certainty"
-            )
-        )
-    })
-
     active_error_types <- reactive({
         category_row <- selected_category()
         filters <- current_filters()
@@ -359,11 +366,13 @@ server <- function(input, output, session) {
     })
 
     criteria_with_framework_fields <- reactive({
-        cols <- selected_certainty_columns()
-        criteria_df %>%
+        filters <- current_filters()
+        req(filters$type_select)
+        criteria_core %>%
+            filter(Model_type == filters$type_select) %>%
             mutate(
-                Underprediction_certainty = .data[[cols[["underprediction"]]]],
-                Overprediction_certainty = .data[[cols[["overprediction"]]]]
+                Underprediction_certainty = Underprediction_error_certainty,
+                Overprediction_certainty = Overprediction_error_certainty
             ) %>%
             left_join(
                 criteria_error %>%
@@ -398,7 +407,7 @@ server <- function(input, output, session) {
         "Not selected"
     }
 
-    filtered_data <- reactive({
+    selected_core_criteria <- reactive({
         active <- active_error_types()
         if (length(active) == 0) {
             return(criteria_with_framework_fields()[0, ])
@@ -428,6 +437,110 @@ server <- function(input, output, session) {
             ) %>%
             ungroup() %>%
             filter(Underprediction_selected | Overprediction_selected)
+    })
+
+    selected_core_related_links <- reactive({
+        core_data <- selected_core_criteria()
+        if (nrow(core_data) == 0) {
+            return(data.frame(
+                Model_type = character(),
+                Core_ID = character(),
+                Core_criterion = character(),
+                Related_ID = character(),
+                Direct_relationship = logical(),
+                Indirect_relationship = logical(),
+                Relationship_type = character(),
+                Relationship_paths = character(),
+                stringsAsFactors = FALSE
+            ))
+        }
+
+        map_dfr(seq_len(nrow(core_data)), function(i) {
+            core_row <- core_data[i, ]
+            all_ids <- split_criteria_ids(core_row$All_related_IDs)
+            if (length(all_ids) == 0) {
+                return(NULL)
+            }
+            direct_ids <- split_criteria_ids(core_row$Direct_related_IDs)
+            indirect_ids <- split_criteria_ids(core_row$Indirect_related_IDs)
+            related_rows <- criteria_related %>%
+                filter(
+                    Model_type == core_row$Model_type,
+                    as.character(ID) %in% all_ids
+                )
+
+            data.frame(
+                Model_type = core_row$Model_type,
+                Core_ID = as.character(core_row$ID),
+                Core_criterion = core_row$Criterion,
+                Related_ID = as.character(related_rows$ID),
+                Direct_relationship = as.character(related_rows$ID) %in%
+                    direct_ids,
+                Indirect_relationship = as.character(related_rows$ID) %in%
+                    indirect_ids,
+                Relationship_paths = vapply(
+                    related_rows$Core_relationship_paths,
+                    function(paths) {
+                        paste(
+                            paths_to_core(paths, core_row$ID),
+                            collapse = "; "
+                        )
+                    },
+                    character(1)
+                ),
+                stringsAsFactors = FALSE
+            ) %>%
+                mutate(
+                    Relationship_type = case_when(
+                        Direct_relationship & Indirect_relationship ~
+                            "Direct and indirect",
+                        Direct_relationship ~ "Direct",
+                        Indirect_relationship ~ "Indirect",
+                        TRUE ~ "Related"
+                    )
+                )
+        })
+    })
+
+    selected_related_criteria <- reactive({
+        links <- selected_core_related_links()
+        if (nrow(links) == 0) {
+            return(
+                criteria_related[0, ] %>%
+                    mutate(
+                        Associated_core_IDs = character(),
+                        Associated_core_criteria = character(),
+                        Direct_relationship = logical(),
+                        Indirect_relationship = logical(),
+                        Relationship_type = character(),
+                        Relationship_paths = character()
+                    )
+            )
+        }
+
+        link_summary <- links %>%
+            group_by(Model_type, Related_ID) %>%
+            summarise(
+                Associated_core_IDs = collapse_unique(Core_ID),
+                Associated_core_criteria = collapse_unique(Core_criterion),
+                Direct_relationship = any(Direct_relationship),
+                Indirect_relationship = any(Indirect_relationship),
+                Relationship_paths = collapse_unique(Relationship_paths),
+                .groups = "drop"
+            ) %>%
+            mutate(
+                Relationship_type = case_when(
+                    Direct_relationship & Indirect_relationship ~
+                        "Direct and indirect",
+                    Direct_relationship ~ "Direct",
+                    Indirect_relationship ~ "Indirect",
+                    TRUE ~ "Related"
+                )
+            )
+
+        criteria_related %>%
+            mutate(Related_ID = as.character(ID)) %>%
+            inner_join(link_summary, by = c("Model_type", "Related_ID"))
     })
 
     display_certainty <- function(value, selected) {
@@ -745,7 +858,7 @@ server <- function(input, output, session) {
             )))
         }
         selected_flag <- paste0(error_type, "_selected")
-        data_counts <- filtered_data() %>%
+        data_counts <- selected_core_criteria() %>%
             filter(.data[[selected_flag]]) %>%
             count(Model_stage, name = "n")
         if (nrow(data_counts) == 0) {
@@ -819,112 +932,171 @@ server <- function(input, output, session) {
         if (!filters_applied()) {
             return(NULL)
         }
-        data <- filtered_data()
-        if (nrow(data) == 0) {
+        core_data <- selected_core_criteria()
+        related_data <- selected_related_criteria()
+        links <- selected_core_related_links()
+        if (nrow(core_data) == 0) {
             return(div(
                 class = "empty-state",
                 "No criteria match this combination. Try lowering the severity or certainty tolerance, or selecting another model type."
             ))
         }
-        stages <- unique(data$Model_stage)
-        map(stages, function(s) {
-            tagList(
-                h5(
-                    style = "margin-top:15px; border-bottom: 1px solid #ccc; font-weight:bold; font-size: 0.9em;",
-                    s
-                ),
-                DTOutput(paste0("table_", gsub("[^[:alnum:]]", "_", s)))
-            )
-        })
-    })
 
-    observe({
-        req(filters_applied())
-        data <- filtered_data()
-        for (s in unique(data$Model_stage)) {
-            local({
-                curr_s <- s
-                output[[paste0(
-                    "table_",
-                    gsub("[^[:alnum:]]", "_", curr_s)
-                )]] <- renderDT({
-                    df_subset <- data %>%
-                        filter(Model_stage == curr_s) %>%
-                        transmute(
-                            Criterion,
-                            Underprediction = mapply(
-                                display_certainty,
-                                Underprediction_certainty,
-                                Underprediction_selected
+        certainty_cell <- function(value, selected) {
+            displayed_value <- display_certainty(value, selected)
+            background <- if (displayed_value == "") {
+                "#ffffff"
+            } else {
+                unname(CERTAINTY_COLORS[displayed_value])
+            }
+            div(
+                class = "criteria-grid-cell certainty-cell",
+                style = paste0("background-color: ", background, ";"),
+                displayed_value
+            )
+        }
+
+        criterion_button <- function(type, id, label) {
+            tags$button(
+                type = "button",
+                class = "criterion-name-button criterion-select",
+                `data-criterion-type` = type,
+                `data-criterion-id` = as.character(id),
+                label
+            )
+        }
+
+        stages <- unique(core_data$Model_stage)
+        stage_tables <- map(stages, function(stage) {
+            stage_core <- core_data %>% filter(Model_stage == stage)
+            rows <- map(seq_len(nrow(stage_core)), function(i) {
+                core_row <- stage_core[i, ]
+                core_id <- as.character(core_row$ID)
+                core_links <- links %>%
+                    filter(Core_ID == core_id) %>%
+                    left_join(
+                        criteria_related %>%
+                            transmute(
+                                Model_type,
+                                Related_ID = as.character(ID),
+                                Related_criterion = Criterion
                             ),
-                            Overprediction = mapply(
-                                display_certainty,
-                                Overprediction_certainty,
-                                Overprediction_selected
-                            )
-                        )
-                    datatable(
-                        df_subset,
-                        selection = 'single',
-                        rownames = FALSE,
-                        options = list(
-                            dom = 't',
-                            paging = FALSE,
-                            columnDefs = list(
-                                list(width = '50%', targets = 0),
-                                list(width = '25%', targets = 1),
-                                list(width = '25%', targets = 2)
-                            )
-                        )
+                        by = c("Model_type", "Related_ID")
                     ) %>%
-                        formatStyle(
-                            'Underprediction',
-                            backgroundColor = styleEqual(
-                                names(CERTAINTY_COLORS),
-                                CERTAINTY_COLORS
-                            )
-                        ) %>%
-                        formatStyle(
-                            'Overprediction',
-                            backgroundColor = styleEqual(
-                                names(CERTAINTY_COLORS),
-                                CERTAINTY_COLORS
-                            )
+                    arrange(Relationship_type, Related_criterion)
+
+                tagList(
+                    div(
+                        class = "criteria-grid-row criterion-core-row",
+                        div(
+                            class = "criteria-grid-cell",
+                            criterion_button("core", core_id, core_row$Criterion),
+                            span(class = "criterion-type-label", "Core")
+                        ),
+                        certainty_cell(
+                            core_row$Underprediction_certainty,
+                            core_row$Underprediction_selected
+                        ),
+                        certainty_cell(
+                            core_row$Overprediction_certainty,
+                            core_row$Overprediction_selected
                         )
-                })
-                observeEvent(
-                    input[[paste0(
-                        "table_",
-                        gsub("[^[:alnum:]]", "_", curr_s),
-                        "_rows_selected"
-                    )]],
-                    {
-                        idx <- input[[paste0(
-                            "table_",
-                            gsub("[^[:alnum:]]", "_", curr_s),
-                            "_rows_selected"
-                        )]]
-                        selected_row_data(
-                            data %>%
-                                filter(Model_stage == curr_s) %>%
-                                slice(idx)
+                    ),
+                    if (nrow(core_links) > 0) {
+                        tags$details(
+                            class = "related-criteria",
+                            tags$summary(sprintf(
+                                "%d related special case%s",
+                                nrow(core_links),
+                                ifelse(nrow(core_links) == 1, "", "s")
+                            )),
+                            tags$ul(
+                                class = "related-criteria-list",
+                                lapply(seq_len(nrow(core_links)), function(j) {
+                                    link <- core_links[j, ]
+                                    tags$li(
+                                        criterion_button(
+                                            "related",
+                                            link$Related_ID,
+                                            link$Related_criterion
+                                        ),
+                                        span(
+                                            class = "relationship-label",
+                                            title = link$Relationship_paths,
+                                            paste0("(", link$Relationship_type, ")")
+                                        )
+                                    )
+                                })
+                            )
                         )
                     }
                 )
             })
-        }
+
+            tagList(
+                h5(
+                    style = "margin-top:15px; border-bottom: 1px solid #ccc; font-weight:bold; font-size: 0.9em;",
+                    stage
+                ),
+                div(
+                    class = "criteria-table",
+                    div(
+                        class = "criteria-grid-row criteria-grid-header",
+                        div(class = "criteria-grid-cell", "Core criterion"),
+                        div(class = "criteria-grid-cell", "Underprediction"),
+                        div(class = "criteria-grid-cell", "Overprediction")
+                    ),
+                    rows
+                )
+            )
+        })
+
+        tagList(
+            p(
+                class = "criteria-count",
+                sprintf(
+                    "%d core criteria selected; %d related special cases identified.",
+                    nrow(core_data),
+                    nrow(related_data)
+                )
+            ),
+            stage_tables
+        )
     })
 
-    report_table_data <- reactive({
+    observeEvent(input$criterion_selection, {
         req(filters_applied())
-        data <- filtered_data()
+        selection <- input$criterion_selection
+        req(selection$criterion_type, selection$criterion_id)
+        criterion_id <- as.character(selection$criterion_id)
+
+        if (selection$criterion_type == "core") {
+            selected <- selected_core_criteria() %>%
+                filter(as.character(ID) == criterion_id) %>%
+                slice(1) %>%
+                mutate(Criterion_type = "Core criterion")
+        } else {
+            selected <- selected_related_criteria() %>%
+                filter(as.character(ID) == criterion_id) %>%
+                slice(1) %>%
+                mutate(Criterion_type = "Related special case")
+        }
+
+        if (nrow(selected) > 0) {
+            selected_row_data(selected)
+        }
+    }, ignoreInit = TRUE)
+
+    core_report_data <- reactive({
+        req(filters_applied())
+        data <- selected_core_criteria()
         if (nrow(data) == 0) {
-            return(data.frame(
-                Message = "No criteria match the current selections."
-            ))
+            return(data.frame())
         }
         data %>%
             transmute(
+                Criterion_type = "Core criterion",
+                Criterion_ID = as.character(ID),
                 Criterion,
                 Model_stage,
                 Model_step,
@@ -938,20 +1110,81 @@ server <- function(input, output, session) {
                     Overprediction_certainty,
                     Overprediction_selected
                 ),
-                Match_reason
+                Match_reason,
+                Associated_core_IDs = "",
+                Associated_core_criteria = "",
+                Relationship_type = "",
+                Relationship_paths = ""
+            )
+    })
+
+    related_report_data <- reactive({
+        req(filters_applied())
+        data <- selected_related_criteria()
+        if (nrow(data) == 0) {
+            return(data.frame())
+        }
+        data %>%
+            transmute(
+                Criterion_type = "Related special case",
+                Criterion_ID = as.character(ID),
+                Criterion,
+                Model_stage,
+                Model_step,
+                Underprediction_certainty = "",
+                Overprediction_certainty = "",
+                Match_reason = "Associated with selected core criterion(s)",
+                Associated_core_IDs,
+                Associated_core_criteria,
+                Relationship_type,
+                Relationship_paths
+            )
+    })
+
+    report_table_data <- reactive({
+        req(filters_applied())
+        core_data <- core_report_data()
+        related_data <- related_report_data()
+        if (nrow(core_data) == 0) {
+            return(data.frame(
+                Message = "No criteria match the current selections."
+            ))
+        }
+        bind_rows(core_data, related_data) %>%
+            arrange(
+                match(Model_stage, MODEL_STAGE_LEVELS),
+                match(Criterion_type, c(
+                    "Core criterion",
+                    "Related special case"
+                )),
+                Criterion
             )
     })
 
     output$report_criteria_table <- renderDT({
         report_df <- report_table_data()
+        if ("Criterion_type" %in% names(report_df)) {
+            report_df <- report_df %>%
+                transmute(
+                    `Criterion type` = Criterion_type,
+                    ID = Criterion_ID,
+                    Criterion,
+                    `Model stage` = Model_stage,
+                    `Model step` = Model_step,
+                    Underprediction = Underprediction_certainty,
+                    Overprediction = Overprediction_certainty,
+                    `Associated core IDs` = Associated_core_IDs,
+                    Relationship = Relationship_type
+                )
+        }
         table <- datatable(
             report_df,
             rownames = FALSE,
-            options = list(dom = 't', paging = FALSE)
+            options = list(dom = 't', paging = FALSE, scrollX = TRUE)
         )
         if (
             !all(
-                c("Underprediction_certainty", "Overprediction_certainty") %in%
+                c("Underprediction", "Overprediction") %in%
                     names(report_df)
             )
         ) {
@@ -959,14 +1192,14 @@ server <- function(input, output, session) {
         }
         table %>%
             formatStyle(
-                'Underprediction_certainty',
+                'Underprediction',
                 backgroundColor = styleEqual(
                     names(CERTAINTY_COLORS),
                     CERTAINTY_COLORS
                 )
             ) %>%
             formatStyle(
-                'Overprediction_certainty',
+                'Overprediction',
                 backgroundColor = styleEqual(
                     names(CERTAINTY_COLORS),
                     CERTAINTY_COLORS
@@ -1055,7 +1288,11 @@ server <- function(input, output, session) {
                 class = "report-box",
                 div(
                     class = "criteria-count",
-                    paste0("Showing ", nrow(filtered_data()), " criteria.")
+                    sprintf(
+                        "%d core criteria selected; %d related special cases identified.",
+                        nrow(selected_core_criteria()),
+                        nrow(selected_related_criteria())
+                    )
                 ),
                 fluidRow(
                     column(
@@ -1098,7 +1335,9 @@ server <- function(input, output, session) {
         content = function(file) {
             req(filters_applied())
             category_row <- selected_category()
-            report_data <- report_table_data()
+            core_report <- core_report_data()
+            related_report <- related_report_data()
+            relationship_links <- selected_core_related_links()
             active <- active_error_types()
             filters <- current_filters()
             app_text <- if (
@@ -1214,13 +1453,115 @@ server <- function(input, output, session) {
                 body_add_par("3. Selected criteria", style = "heading 2") %>%
                 body_add_par(
                     paste(
-                        "Number of criteria included:",
-                        nrow(filtered_data())
+                        "Core criteria selected:",
+                        nrow(core_report)
                     ),
                     style = "Normal"
                 ) %>%
-                body_add_par("", style = "Normal") %>%
-                body_add_table(report_data, style = "table_template")
+                body_add_par(
+                    paste(
+                        "Related special cases identified:",
+                        nrow(related_report)
+                    ),
+                    style = "Normal"
+                ) %>%
+                body_add_par("", style = "Normal")
+
+            if (nrow(core_report) == 0) {
+                doc <- doc %>% body_add_par(
+                    "No criteria match the selected use-case scenario.",
+                    style = "Normal"
+                )
+            } else {
+                for (i in seq_len(nrow(core_report))) {
+                    core_row <- core_report[i, ]
+                    core_id <- as.character(core_row$Criterion_ID)
+                    related_for_core <- relationship_links %>%
+                        filter(Core_ID == core_id) %>%
+                        left_join(
+                            criteria_related %>%
+                                transmute(
+                                    Model_type,
+                                    Related_ID = as.character(ID),
+                                    `Related special case` = Criterion
+                                ),
+                            by = c("Model_type", "Related_ID")
+                        ) %>%
+                        transmute(
+                            ID = Related_ID,
+                            `Related special case`,
+                            Relationship = Relationship_type,
+                            `Relationship path` = Relationship_paths
+                        ) %>%
+                        arrange(`Related special case`)
+
+                    doc <- doc %>%
+                        body_add_par(
+                            paste0(
+                                "Core criterion ",
+                                core_id,
+                                ": ",
+                                core_row$Criterion
+                            ),
+                            style = "heading 3"
+                        ) %>%
+                        body_add_par(
+                            paste(
+                                "Model stage:",
+                                core_row$Model_stage,
+                                "| Model step:",
+                                core_row$Model_step
+                            ),
+                            style = "Normal"
+                        ) %>%
+                        body_add_par(
+                            paste(
+                                "Underprediction certainty:",
+                                ifelse(
+                                    core_row$Underprediction_certainty == "",
+                                    "Not selected",
+                                    core_row$Underprediction_certainty
+                                )
+                            ),
+                            style = "Normal"
+                        ) %>%
+                        body_add_par(
+                            paste(
+                                "Overprediction certainty:",
+                                ifelse(
+                                    core_row$Overprediction_certainty == "",
+                                    "Not selected",
+                                    core_row$Overprediction_certainty
+                                )
+                            ),
+                            style = "Normal"
+                        ) %>%
+                        body_add_par(
+                            paste("Selected error pathway:", core_row$Match_reason),
+                            style = "Normal"
+                        )
+
+                    if (nrow(related_for_core) == 0) {
+                        doc <- doc %>% body_add_par(
+                            "No related special cases.",
+                            style = "Normal"
+                        )
+                    } else {
+                        doc <- doc %>%
+                            body_add_fpar(
+                                fpar(ftext(
+                                    "Related special cases",
+                                    prop = fp_text(bold = TRUE)
+                                ))
+                            ) %>%
+                            body_add_table(
+                                related_for_core,
+                                style = "table_template"
+                            )
+                    }
+                    doc <- doc %>% body_add_par("", style = "Normal")
+                }
+            }
 
             print(doc, target = file)
         }
@@ -1244,16 +1585,44 @@ server <- function(input, output, session) {
         if (is.null(res)) {
             return(p(em("Click a criterion to view details.")))
         }
-        filters <- current_filters()
-        justification <- if (identical(filters$type_select, "Projection")) {
-            res$Projection_justification
-        } else {
-            res$Prediction_justification
+        justification <- res$Justification
+        is_related <- identical(
+            res$Criterion_type,
+            "Related special case"
+        )
+        has_text <- function(value) {
+            length(value) > 0 && !is.na(value) && trimws(value) != ""
         }
         tagList(
+            p(strong("Criterion type: "), res$Criterion_type),
             p(strong("Criterion: "), res$Criterion),
             p(strong("Model Stage: "), res$Model_stage),
             p(strong("Model Step: "), res$Model_step),
+            if (is_related) {
+                tagList(
+                    p(
+                        strong("Associated selected core criteria:"),
+                        br(),
+                        plain_display_text(res$Associated_core_criteria)
+                    ),
+                    p(
+                        strong("Relationship type: "),
+                        res$Relationship_type
+                    ),
+                    p(
+                        strong("Relationship path(s):"),
+                        br(),
+                        plain_display_text(res$Relationship_paths)
+                    ),
+                    if (has_text(res$Core_reference)) {
+                        p(
+                            strong("Core reference:"),
+                            br(),
+                            plain_display_text(res$Core_reference)
+                        )
+                    }
+                )
+            },
             p(
                 strong("Description:"),
                 br(),
@@ -1267,30 +1636,43 @@ server <- function(input, output, session) {
                     plain_display_text(res$Violation)
                 )
             ),
-            p(strong("Selected Error Pathway:"), br(), res$Match_reason),
-            p(
-                strong("Underprediction Certainty: "),
-                res$Underprediction_certainty
-            ),
-            p(
-                strong("Overprediction Certainty: "),
-                res$Overprediction_certainty
-            ),
-            if (!is.na(justification) && justification != "") {
+            if (!is_related) {
+                tagList(
+                    p(
+                        strong("Selected Error Pathway:"),
+                        br(),
+                        res$Match_reason
+                    ),
+                    p(
+                        strong("Underprediction Certainty: "),
+                        res$Underprediction_certainty
+                    ),
+                    p(
+                        strong("Overprediction Certainty: "),
+                        res$Overprediction_certainty
+                    )
+                )
+            },
+            if (has_text(justification)) {
                 p(
                     strong("Justification:"),
                     br(),
                     plain_display_text(justification)
                 )
             },
-            p(
-                strong(style = "color: #27ae60;", "Potential Solutions:"),
-                br(),
-                div(
-                    style = "font-size: 0.85em; background-color: #f4fdf7; padding: 8px; border-left: 4px solid #27ae60;",
-                    plain_display_text(res$Solutions)
+            if (has_text(res$Solutions)) {
+                p(
+                    strong(
+                        style = "color: #27ae60;",
+                        "Potential Solutions:"
+                    ),
+                    br(),
+                    div(
+                        style = "font-size: 0.85em; background-color: #f4fdf7; padding: 8px; border-left: 4px solid #27ae60;",
+                        plain_display_text(res$Solutions)
+                    )
                 )
-            )
+            }
         )
     })
 }

@@ -8,27 +8,32 @@ library(officer)
 
 # --- 1. Load and Prepare Data ---
 application_inventory <- read.csv(
-    "data/Applications - Application_inventory.csv",
+    "data/application_inventory.csv",
     stringsAsFactors = FALSE,
     check.names = FALSE
 )
 application_categories <- read.csv(
-    "data/Applications - Application_categories.csv",
+    "data/application_categories.csv",
     stringsAsFactors = FALSE,
     check.names = FALSE
 )
 application_error <- read.csv(
-    "data/Applications - Application_error.csv",
+    "data/application_error.csv",
     stringsAsFactors = FALSE,
     check.names = FALSE
 )
-criteria_df <- read.csv(
-    "data/Criteria - Criteria.csv",
+criteria_core <- read.csv(
+    "data/criteria_core.csv",
+    stringsAsFactors = FALSE,
+    check.names = FALSE
+)
+criteria_related <- read.csv(
+    "data/criteria_related.csv",
     stringsAsFactors = FALSE,
     check.names = FALSE
 )
 criteria_error <- read.csv(
-    "data/Criteria - Criteria_error.csv",
+    "data/criteria_error.csv",
     stringsAsFactors = FALSE,
     check.names = FALSE
 )
@@ -64,7 +69,7 @@ APPLICATION_CATEGORY_CHOICES <- sort(unique(
     application_categories$Application_category
 ))
 APPLICATION_CHOICES <- sort(unique(application_inventory$Application))
-MODEL_STAGE_LEVELS <- unique(criteria_df$Model_stage)
+MODEL_STAGE_LEVELS <- unique(criteria_core$Model_stage)
 DEFAULT_FILTERS <- list(
     cat_select = "",
     app_select = "",
@@ -106,7 +111,7 @@ validate_columns <- function(df, required_cols, file_label) {
 validate_columns(
     application_inventory,
     c("Application", "Application_category", "Description"),
-    "Applications - Application_inventory.csv"
+    "application_inventory.csv"
 )
 
 validate_columns(
@@ -118,38 +123,63 @@ validate_columns(
         "Underprediction_error_effect",
         "Overprediction_error_effect"
     ),
-    "Applications - Application_categories.csv"
+    "application_categories.csv"
 )
 
 validate_columns(
     application_error,
     c("Error_effect", "Definition", "Error_effect_rank"),
-    "Applications - Application_error.csv"
+    "application_error.csv"
 )
 
 validate_columns(
-    criteria_df,
+    criteria_core,
     c(
+        "ID",
+        "Model_type",
         "Model_stage",
         "Model_step",
         "Criterion",
         "Description",
         "Violation",
-        "Underprediction_prediction_error_certainty",
-        "Overprediction_prediction_error_certainty",
-        "Prediction_justification",
-        "Underprediction_projection_error_certainty",
-        "Overprediction_projection_error_certainty",
-        "Projection_justification",
-        "Solutions"
+        "Solutions",
+        "Justification",
+        "Underprediction_error_certainty",
+        "Overprediction_error_certainty",
+        "Direct_related_IDs",
+        "Indirect_related_IDs",
+        "All_related_IDs",
+        "Citations"
     ),
-    "Criteria - Criteria.csv"
+    "criteria_core.csv"
+)
+
+validate_columns(
+    criteria_related,
+    c(
+        "ID",
+        "Model_type",
+        "Model_stage",
+        "Model_step",
+        "Criterion",
+        "Description",
+        "Violation",
+        "Solutions",
+        "Justification",
+        "Core_reference",
+        "Direct_core_IDs",
+        "Indirect_core_IDs",
+        "All_core_IDs",
+        "Core_relationship_paths",
+        "Citations"
+    ),
+    "criteria_related.csv"
 )
 
 validate_columns(
     criteria_error,
     c("Error_certainty", "Definition", "Error_certainty_rank"),
-    "Criteria - Criteria_error.csv"
+    "criteria_error.csv"
 )
 
 validate_columns(
@@ -161,7 +191,8 @@ validate_columns(
 application_inventory <- repair_text_columns(application_inventory)
 application_categories <- repair_text_columns(application_categories)
 application_error <- repair_text_columns(application_error)
-criteria_df <- repair_text_columns(criteria_df)
+criteria_core <- repair_text_columns(criteria_core)
+criteria_related <- repair_text_columns(criteria_related)
 criteria_error <- repair_text_columns(criteria_error)
 glossary <- repair_text_columns(glossary)
 
@@ -198,4 +229,4 @@ read_landing_docx <- function(filepath) {
     repair_mojibake(text_lines)
 }
 
-landing_lines <- read_landing_docx("tab1_landing_page_intro.docx")
+landing_lines <- read_landing_docx("data/tab1_landing_page_intro.docx")

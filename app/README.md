@@ -1,18 +1,31 @@
 # Shiny App
-> Based on the original Quarto (qmd) file.
 
-Before running the app, make sure you have the required packages installed. You can install them using the following command:
+This folder contains the modular Shiny application:
 
-```R
-install.packages(
-    c("bslib", "dplyr", "DT", "officer", "plotly", "purrr", "rmarkdown", 
-    "shiny", "stringr"))
-```
+- `global.R` loads data and shared configuration;
+- `ui.R` defines the interface; and
+- `server.R` implements filtering, criterion relationships, and reports.
 
-To run the app, you can use the following command in your R console:
+The app reads its source files from `data/`.
 
-```R
+From the repository root, run:
+
+```r
 shiny::runApp("app")
 ```
 
-This will launch the Shiny application in your default web browser.
+From this `app` directory, run:
+
+```r
+shiny::runApp(".")
+```
+
+Run the full lookup-table validator from the repository root before publishing
+data changes:
+
+```r
+source("validate_app_data.R")
+```
+
+See the [project README](../README.md) for package requirements, filtering
+logic, criteria relationships, data schemas, and report behavior.

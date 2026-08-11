@@ -1,163 +1,236 @@
 # SDM Criteria Selector
 
-This folder contains a Quarto Shiny app for identifying species distribution
-model (SDM) evaluation criteria for a selected biodiversity conservation
-use-case scenario.
+This repository contains an R Shiny app for identifying species distribution
+model (SDM) evaluation criteria for a biodiversity conservation use-case
+scenario.
 
-The use-case scenario combines:
+A use-case scenario combines:
 
-- model application category or specific model application
-- model type, either `Prediction` or `Projection`
-- error severity tolerance
-- error certainty tolerance
+- a model application category or specific model application;
+- model type: `Prediction` or `Projection`;
+- error severity tolerance; and
+- error certainty tolerance.
 
-The app applies filters only after the user clicks `Filter Criteria`.
+The app applies the selections only when the user clicks `Filter Criteria`.
 
-## Files
+## Project Structure
 
-In the `app` folder, the `global.R`, `ui.R`, and `server.R` files contain the
-Shiny app code.
+- `app/global.R` loads and validates app data and defines shared constants.
+- `app/ui.R` defines the sidebar, tabs, styling, and client-side interactions.
+- `app/server.R` implements filtering, criterion relationships, displays, and
+  report generation.
+- `app/data/` contains the application, criteria, glossary, and landing-page
+  source files.
+- `validate_app_data.R` performs more extensive standalone data validation.
 
-The `app/data` folder contains the following files:
+The criteria inventory is divided into two files:
 
-- `tab1_landing_page_intro.docx` provides the landing-page text for the
+- `criteria_core.csv` contains core criteria. These rows define
+  underprediction and overprediction error certainty.
+- `criteria_related.csv` contains related criteria that are special cases of
+  core criteria. Relationships may be direct or may pass through another
+  related criterion.
+
+## Data Files
+
+The `app/data` folder contains:
+
+- `tab1_landing_page_intro.docx`: text for the
   `Overview & Instructions` tab.
-- `Applications - Application_inventory.csv` lists specific model applications,
-  their application categories, descriptions, and optional example citations.
-- `Applications - Application_categories.csv` defines each application category,
-  including conservation decision text, SDM use description, and underprediction
-  and overprediction error effects.
-- `Applications - Application_error.csv` maps application error effects to
-  severity ranks.
-- `Criteria - Criteria.csv` defines the SDM criteria inventory, including model
-  stage, model step, criterion text, descriptions, violation effects, model-type
-  certainty values, justifications, and possible solutions.
-- `Criteria - Criteria_error.csv` maps criterion error certainty values to
-  certainty ranks.
-- `glossary_app.csv` defines glossary terms, definitions, and examples shown in
-  the `Glossary` tab.
+- `application_inventory.csv`: specific model applications,
+  their categories, descriptions, and optional example papers.
+- `application_categories.csv`: conservation decision and SDM
+  use descriptions, plus underprediction and overprediction error effects for
+  each application category.
+- `application_error.csv`: error-effect severity definitions
+  and ranks.
+- `criteria_core.csv`: model-specific core criteria and error certainty.
+- `criteria_related.csv`: model-specific related special cases and their
+  relationships to core criteria.
+- `criteria_error.csv`: certainty definitions and ranks.
+- `glossary_app.csv`: glossary terms, definitions, and examples.
+
+## Requirements
+
+Install the required R packages once:
+
+```r
+install.packages(c(
+    "bslib",
+    "dplyr",
+    "DT",
+    "officer",
+    "plotly",
+    "purrr",
+    "shiny",
+    "stringr"
+))
+```
 
 ## Running the App
 
-Before running the app, make sure you have the required packages installed. You can install them using the following command:
+From the repository root, run:
 
-```R
-install.packages(
-    c("bslib", "dplyr", "DT", "officer", "plotly", "purrr", "rmarkdown", 
-    "shiny", "stringr"))
-```
-
-To run the app, you can use the following command in your R console:
-
-```R
+```r
 shiny::runApp("app")
 ```
 
-This will launch the Shiny application in your default web browser.
+In Positron, open an R console with the repository root as the working
+directory, run the command above, and open the URL printed in the console.
 
-The app expects the CSV and DOCX files listed above to be in the `app/data` folder.
+If the working directory is already `app`, use:
 
-To validate the lookup tables before running the app, use the functions defined in `validate_app_data.R`:
+```r
+shiny::runApp(".")
+```
+
+## Validating Data
+
+From the repository root, run:
 
 ```r
 source("validate_app_data.R")
 ```
 
+A successful run ends with:
+
+```text
+All app data validation checks passed.
+```
+
+The validator checks:
+
+- required columns;
+- allowed severity and certainty ranks;
+- application categories and error-effect lookup values;
+- allowed model types;
+- unique `Model_type` and `ID` combinations;
+- that a criterion is not both core and related for the same model type;
+- certainty values against `criteria_error.csv`;
+- direct, indirect, and complete relationship lists;
+- model-specific relationship targets;
+- reciprocal core-to-related relationships; and
+- relationship paths, including paths through intermediate related criteria.
+
 ## App Workflow
 
-1. Use the sidebar to select a model application category, a specific model
-   application, or both. The category and application dropdowns update each
-   other.
-2. Select whether the model is being used for prediction or projection.
+1. Select an application category, a specific application, or both. The two
+   dropdowns update each other.
+2. Select whether the SDM is being used for prediction or projection.
 3. Select error severity and error certainty tolerances.
 4. Click `Filter Criteria`.
 
-Before filters are applied, all result tabs except `Overview & Instructions`
-show a prompt asking the user to select a use-case scenario and click
-`Filter Criteria`.
+Before filtering, every results tab except `Overview & Instructions` displays
+a prompt.
 
-The `Selected use-case scenario` tab summarizes the selected application
-category, selected model application if provided, model type, optional user
-details, and other applications in the selected category.
+The `Selected use-case scenario` tab summarizes the application, model type,
+error settings, optional user details, and other applications in the category.
 
-The `Applicable Criteria` tab shows the selected error type logic, the list of
-selected criteria, criterion details for the selected row, and radar summaries
-of selected criteria along the model cycle.
+The `Applicable Criteria` tab displays:
 
-The `Generate a Report` tab provides report metadata inputs and exports the
-selected criteria as DOCX or CSV.
+- the selected error-type logic;
+- selected core criteria grouped by model stage;
+- expandable related special cases beneath each associated core criterion;
+- direct and indirect relationship labels;
+- details for either a core or related criterion; and
+- radar plots summarizing selected core criteria along the model cycle.
 
-The `Glossary` tab displays glossary terms as a searchable table. The
-`References` column is hidden, and `Some examples` is shown as `Example`.
+Radar plots count core criteria only. Related criteria do not have independently
+defined error certainty and therefore are not counted as separately filtered
+criteria.
+
+The `Generate a Report` tab provides report metadata and DOCX and CSV exports.
+The `Glossary` tab displays searchable definitions and examples.
 
 ## Filtering Logic
 
 Application category and error severity tolerance determine which error types
-are considered:
+are active:
 
-- `Correctness (high tolerance)` includes only error effects ranked `High`.
-- `Quality (medium tolerance)` includes error effects ranked `High` or
-  `Medium`.
-- `Efficiency (low tolerance)` includes error effects ranked `High`, `Medium`,
+- `Correctness (high tolerance)` includes effects ranked `High`.
+- `Quality (medium tolerance)` includes effects ranked `High` or `Medium`.
+- `Efficiency (low tolerance)` includes effects ranked `High`, `Medium`,
   or `Low`.
 
-Model type determines which criterion certainty columns are used:
+Core criteria are first restricted to the selected `Model_type`. The app then
+uses:
 
-- `Underprediction_prediction_error_certainty`
-- `Overprediction_prediction_error_certainty`
-- `Underprediction_projection_error_certainty`
-- `Overprediction_projection_error_certainty`
+- `Underprediction_error_certainty`; and
+- `Overprediction_error_certainty`.
 
-Error certainty tolerance then filters criteria using ordinal thresholds:
+Error certainty tolerance is ordinal:
 
-- `Always (high tolerance)` includes criteria ranked `High`.
-- `Sometimes (medium tolerance)` includes criteria ranked `High` or `Medium`.
-- `Rarely (low tolerance)` includes criteria ranked `High`, `Medium`, or `Low`.
+- `Always (high tolerance)` includes `Always`.
+- `Sometimes (medium tolerance)` includes `Always` and `Sometimes`.
+- `Rarely (low tolerance)` includes `Always`, `Sometimes`, and `Rarely`.
 
-A criterion is selected when at least one active error type passes the criterion
+A core criterion is selected when at least one active error type meets the
 certainty threshold.
 
-## Data Notes
+After core filtering, the app retrieves related criteria for the same model
+type using `All_related_IDs` and `All_core_IDs`. It retains direct and
+indirect classifications and the paths in `Core_relationship_paths`. Related
+criteria are associated with selected cores; they are not filtered using
+independent certainty values.
 
-The app validates required CSV columns at startup and repairs common text
-encoding artifacts in character columns. Optional example citation fields in
-`Applications - Application_inventory.csv` can contain multiple values separated
-with semicolons.
+Because an ID can have a different role for Prediction and Projection, criteria
+must always be identified by the combination of `Model_type` and `ID`.
 
-If encoding artifacts appear in the app, re-save the affected CSV as UTF-8. The
-runtime repair is a guardrail, but UTF-8 source files are preferred.
+## Reports
+
+The on-screen report and CSV distinguish `Core criterion` from
+`Related special case`.
+
+Core rows include their selected underprediction and overprediction certainty.
+Related rows leave certainty fields blank and include:
+
+- associated core IDs and names;
+- relationship type; and
+- relationship paths.
+
+Each related criterion appears once in the consolidated CSV, even when it is
+associated with multiple selected core criteria. The DOCX is hierarchical:
+related special cases are listed beneath each associated selected core
+criterion.
 
 ## Data Dictionary
 
 Required columns by file:
 
-- `Applications - Application_inventory.csv`: `Application`,
-  `Application_category`, `Description`. Optional columns used when present:
+- `application_inventory.csv`: `Application`,
+  `Application_category`, `Description`. Optional fields used when present:
   `Example citation`, `Citation URL`.
-- `Applications - Application_categories.csv`: `Application_category`,
+- `application_categories.csv`: `Application_category`,
   `Question`, `Action`, `Underprediction_error_effect`,
   `Overprediction_error_effect`.
-- `Applications - Application_error.csv`: `Error_effect`, `Definition`,
+- `application_error.csv`: `Error_effect`, `Definition`,
   `Error_effect_rank`.
-- `Criteria - Criteria.csv`: `Model_stage`, `Model_step`, `Criterion`,
-  `Description`, `Violation`, `Underprediction_prediction_error_certainty`,
-  `Overprediction_prediction_error_certainty`, `Prediction_justification`,
-  `Underprediction_projection_error_certainty`,
-  `Overprediction_projection_error_certainty`, `Projection_justification`,
-  `Solutions`.
-- `Criteria - Criteria_error.csv`: `Error_certainty`, `Definition`,
+- `criteria_core.csv`: `ID`, `Model_type`, `Model_stage`,
+  `Model_step`, `Criterion`, `Description`, `Violation`, `Solutions`,
+  `Justification`, `Underprediction_error_certainty`,
+  `Overprediction_error_certainty`, `Direct_related_IDs`,
+  `Indirect_related_IDs`, `All_related_IDs`, `Citations`.
+- `criteria_related.csv`: `ID`, `Model_type`, `Model_stage`,
+  `Model_step`, `Criterion`, `Description`, `Violation`, `Solutions`,
+  `Justification`, `Core_reference`, `Direct_core_IDs`,
+  `Indirect_core_IDs`, `All_core_IDs`, `Core_relationship_paths`,
+  `Citations`.
+- `criteria_error.csv`: `Error_certainty`, `Definition`,
   `Error_certainty_rank`.
-- `glossary_app.csv`: `Term`, `Definition`, `Some examples`. Optional column
-  hidden by the app when present: `References`.
+- `glossary_app.csv`: `Term`, `Definition`, `Some examples`. The
+  optional `References` column is hidden in the app.
 
-Lookup-table values:
+`Solutions` and `Core_reference` may be blank for related criteria. Lists of
+IDs are comma-separated. Multiple relationship paths are semicolon-separated,
+with `>` indicating movement from a related criterion toward a core criterion.
 
-- Error severity ranks must be `High`, `Medium`, or `Low`.
-- Error certainty ranks must be `High`, `Medium`, or `Low`.
-- Application error effects in `Applications - Application_categories.csv` must
-  exist in `Applications - Application_error.csv`.
-- Criterion certainty values in `Criteria - Criteria.csv` must exist in
-  `Criteria - Criteria_error.csv`.
+## Encoding
+
+CSV files should be saved as UTF-8. The app repairs common encoding artifacts
+at runtime as a guardrail, but correcting the source CSV is preferred.
+
+Multiple example citations or URLs in
+`application_inventory.csv` may be separated with semicolons.
 
 ## License
 
