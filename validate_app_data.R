@@ -12,12 +12,16 @@ read_app_csv <- function(path) {
   read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
 }
 
-application_inventory <- read_app_csv("Applications - Application_inventory.csv")
-application_categories <- read_app_csv("Applications - Application_categories.csv")
-application_error <- read_app_csv("Applications - Application_error.csv")
-criteria_df <- read_app_csv("Criteria - Criteria.csv")
-criteria_error <- read_app_csv("Criteria - Criteria_error.csv")
-glossary <- read_app_csv("glossary_app.csv")
+data_path <- function(filename) {
+  file.path("app", "data", filename)
+}
+
+application_inventory <- read_app_csv(data_path("Applications - Application_inventory.csv"))
+application_categories <- read_app_csv(data_path("Applications - Application_categories.csv"))
+application_error <- read_app_csv(data_path("Applications - Application_error.csv"))
+criteria_df <- read_app_csv(data_path("Criteria - Criteria.csv"))
+criteria_error <- read_app_csv(data_path("Criteria - Criteria_error.csv"))
+glossary <- read_app_csv(data_path("glossary_app.csv"))
 
 required_columns(
   application_inventory,
