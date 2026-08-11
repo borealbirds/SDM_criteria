@@ -11,6 +11,7 @@ ui <- fluidPage(
       .sidebar-title { font-size: 1.2em; margin-top: 0; margin-bottom: 12px; }
       .section-title { background-color: #2c3e50; color: white; padding: 10px 15px; border-radius: 5px; margin-bottom: 15px; font-size: 1.1em; font-weight: bold; }
       .custom-legend { text-align: center; margin-top: 5px; margin-bottom: 15px; padding: 8px; background: #f8f9fa; border-radius: 8px; border: 1px solid #ddd; }
+      .legend-title { display: block; margin-bottom: 5px; color: #2c3e50; font-size: 0.8em; font-weight: 700; }
       .legend-item { display: inline-block; margin: 0 12px; font-size: 0.8em; font-weight: bold; }
       .legend-box { display: inline-block; width: 10px; height: 10px; margin-right: 5px; border: 1px solid #666; vertical-align: middle; }
       .report-box { border: 1px solid #dee2e6; padding: 20px; border-radius: 8px; background-color: #ffffff; margin-bottom: 20px; }

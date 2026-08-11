@@ -121,13 +121,58 @@ server <- function(input, output, session) {
                         "Select a core criterion or related special case to display details."
                     ),
                     div(
+                        class = "custom-legend",
+                        span(
+                            class = "legend-title",
+                            "Criterion error certainty"
+                        ),
+                        div(
+                            class = "legend-item",
+                            span(
+                                class = "legend-box",
+                                style = paste0(
+                                    "background:",
+                                    CERTAINTY_COLORS["Always"]
+                                )
+                            ),
+                            "Always"
+                        ),
+                        div(
+                            class = "legend-item",
+                            span(
+                                class = "legend-box",
+                                style = paste0(
+                                    "background:",
+                                    CERTAINTY_COLORS["Sometimes"]
+                                )
+                            ),
+                            "Sometimes"
+                        ),
+                        div(
+                            class = "legend-item",
+                            span(
+                                class = "legend-box",
+                                style = paste0(
+                                    "background:",
+                                    CERTAINTY_COLORS["Rarely"]
+                                )
+                            ),
+                            "Rarely"
+                        )
+                    ),
+                    div(
                         class = "criteria-scroll",
                         uiOutput("criteria_tables_ui")
                     ),
                     hr(),
                     div(
                         class = "section-title",
-                        "Summary of applicable criteria along the model cycle"
+                        "Distribution of selected core criteria across the model cycle"
+                    ),
+                    p(
+                        class = "risk-note",
+                        style = "text-align: center; margin-top: 0;",
+                        "Radius represents the number of selected core criteria. Related special cases are not counted separately."
                     ),
                     fluidRow(
                         column(
@@ -136,7 +181,7 @@ server <- function(input, output, session) {
                                 class = "plot-box",
                                 h6(
                                     class = "plot-title",
-                                    "Underprediction Criteria"
+                                    "Core criteria for underprediction"
                                 ),
                                 plotlyOutput(
                                     "radar_underprediction",
@@ -150,49 +195,13 @@ server <- function(input, output, session) {
                                 class = "plot-box",
                                 h6(
                                     class = "plot-title",
-                                    "Overprediction Criteria"
+                                    "Core criteria for overprediction"
                                 ),
                                 plotlyOutput(
                                     "radar_overprediction",
                                     height = "280px"
                                 )
                             )
-                        )
-                    ),
-                    div(
-                        class = "custom-legend",
-                        div(
-                            class = "legend-item",
-                            span(
-                                class = "legend-box",
-                                style = paste0(
-                                    "background:",
-                                    TOLERANCE_COLORS["High"]
-                                )
-                            ),
-                            "High"
-                        ),
-                        div(
-                            class = "legend-item",
-                            span(
-                                class = "legend-box",
-                                style = paste0(
-                                    "background:",
-                                    TOLERANCE_COLORS["Medium"]
-                                )
-                            ),
-                            "Medium"
-                        ),
-                        div(
-                            class = "legend-item",
-                            span(
-                                class = "legend-box",
-                                style = paste0(
-                                    "background:",
-                                    TOLERANCE_COLORS["Low"]
-                                )
-                            ),
-                            "Low"
                         )
                     )
                 ),
@@ -849,6 +858,22 @@ server <- function(input, output, session) {
         )
     })
 
+    stage_plot_max <- reactive({
+        active <- active_error_types()
+        data <- selected_core_criteria()
+        if (length(active) == 0 || nrow(data) == 0) {
+            return(1)
+        }
+        counts <- unlist(lapply(active, function(error_type) {
+            selected_flag <- paste0(error_type, "_selected")
+            data %>%
+                filter(.data[[selected_flag]]) %>%
+                count(Model_stage) %>%
+                pull(n)
+        }))
+        max(c(1, counts))
+    })
+
     render_stage_plot <- function(error_type) {
         active <- active_error_types()
         if (!(error_type %in% active)) {
@@ -875,6 +900,17 @@ server <- function(input, output, session) {
             left_join(data_counts, by = "Model_stage") %>%
             mutate(n = ifelse(is.na(n), 0, n)) %>%
             bind_rows(slice(., 1))
+        plot_colors <- list(
+            Underprediction = list(
+                line = "#5f6368",
+                fill = "rgba(95, 99, 104, 0.24)"
+            ),
+            Overprediction = list(
+                line = "#9aa0a6",
+                fill = "rgba(154, 160, 166, 0.28)"
+            )
+        )
+        colors <- plot_colors[[error_type]]
         plot_ly(
             data,
             r = ~n,
@@ -882,16 +918,20 @@ server <- function(input, output, session) {
             type = "scatterpolar",
             mode = "lines+markers",
             fill = "toself",
-            line = list(color = "#18bc9c"),
-            marker = list(color = "#18bc9c", size = 6),
-            fillcolor = "rgba(24, 188, 156, 0.25)",
-            hovertemplate = "%{theta}<br>Criteria: %{r}<extra></extra>"
+            line = list(color = colors$line),
+            marker = list(color = colors$line, size = 6),
+            fillcolor = colors$fill,
+            hovertemplate = paste0(
+                "%{theta}<br>Selected core criteria: %{r}",
+                "<extra></extra>"
+            )
         ) %>%
             layout(
                 polar = list(
                     radialaxis = list(
                         visible = TRUE,
-                        rangemode = "tozero",
+                        range = c(0, stage_plot_max()),
+                        dtick = 1,
                         tickfont = list(size = 10)
                     ),
                     angularaxis = list(tickfont = list(size = 10))
@@ -1294,10 +1334,18 @@ server <- function(input, output, session) {
                         nrow(selected_related_criteria())
                     )
                 ),
+                p(
+                    class = "risk-note",
+                    style = "text-align: center; margin-top: 0;",
+                    "Radius represents the number of selected core criteria. Related special cases are not counted separately."
+                ),
                 fluidRow(
                     column(
                         6,
-                        h6("Underprediction Criteria", align = "center"),
+                        h6(
+                            "Core criteria for underprediction",
+                            align = "center"
+                        ),
                         plotlyOutput(
                             "radar_underprediction_report",
                             height = "280px"
@@ -1305,7 +1353,10 @@ server <- function(input, output, session) {
                     ),
                     column(
                         6,
-                        h6("Overprediction Criteria", align = "center"),
+                        h6(
+                            "Core criteria for overprediction",
+                            align = "center"
+                        ),
                         plotlyOutput(
                             "radar_overprediction_report",
                             height = "280px"
