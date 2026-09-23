@@ -22,9 +22,6 @@ The app applies the selections only when the user clicks `Filter Criteria`.
 - `app/data/` contains the application, criteria, glossary, and landing-page
   source files.
 - `validate_app_data.R` performs more extensive standalone data validation.
-- `summarize_framework.R` produces manuscript-oriented summaries of the SDM
-  criteria framework. It currently covers criteria and error certainty and is
-  intended to include applications and criteria-application links.
 
 The criteria inventory is divided into two files:
 
@@ -120,21 +117,6 @@ The validator checks:
 - model-specific relationship targets;
 - reciprocal core-to-related relationships; and
 - relationship paths, including paths through intermediate related criteria.
-
-## Manuscript Summaries
-
-From the repository root, run:
-
-```r
-source("summarize_framework.R")
-```
-
-The script validates the source-table structure, creates summary data frames in
-the R session, and prints a results-oriented summary to the console. It does not
-write tabular or text outputs; persistent outputs are reserved for figures.
-Framework-level summaries count unique criterion IDs, while error-certainty
-summaries retain separate prediction and projection records because certainty
-can differ by model type.
 
 ## App Workflow
 
