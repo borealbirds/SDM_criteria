@@ -773,7 +773,7 @@ server <- function(input, output, session) {
     output$glossary_table <- renderDT({
         glossary_table <- glossary %>%
             select(-any_of("References")) %>%
-            rename(Example = `Some examples`) %>%
+            rename(Example = Examples) %>%
             arrange(Term) %>%
             datatable(
                 rownames = FALSE,

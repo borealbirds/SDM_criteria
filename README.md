@@ -223,7 +223,7 @@ Required columns by file:
   `Citations`.
 - `criteria_error.csv`: `Error_certainty`, `Definition`,
   `Error_certainty_rank`.
-- `glossary_app.csv`: `Term`, `Definition`, `Some examples`. The
+- `glossary_app.csv`: `Term`, `Definition`, `Examples`. The
   optional `References` column is hidden in the app.
 
 `Solutions` and `Core_reference` may be blank for related criteria. Lists of

@@ -195,7 +195,7 @@ validate_columns(
 
 validate_columns(
     glossary,
-    c("Term", "Definition", "Some examples"),
+    c("Term", "Definition", "Examples"),
     "glossary_app.csv"
 )
 

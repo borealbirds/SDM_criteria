@@ -69,7 +69,7 @@ required_columns(
   c("Error_certainty", "Definition", "Error_certainty_rank"),
   "criteria_error.csv"
 )
-required_columns(glossary, c("Term", "Definition", "Some examples"), "glossary_app.csv")
+required_columns(glossary, c("Term", "Definition", "Examples"), "glossary_app.csv")
 required_columns(
   reference_library,
   c(
