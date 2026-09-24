@@ -42,6 +42,11 @@ glossary <- read.csv(
     stringsAsFactors = FALSE,
     check.names = FALSE
 )
+reference_library <- read.csv(
+    "data/references.csv",
+    stringsAsFactors = FALSE,
+    check.names = FALSE
+)
 
 MODEL_TYPES <- c("Prediction", "Projection")
 TOLERANCE_LEVELS <- c("High", "Medium", "Low")
@@ -110,7 +115,13 @@ validate_columns <- function(df, required_cols, file_label) {
 
 validate_columns(
     application_inventory,
-    c("Application", "Application_category", "Description"),
+    c(
+        "Application",
+        "Application_category",
+        "Description",
+        "Example citation",
+        "Citation URL"
+    ),
     "application_inventory.csv"
 )
 
@@ -188,6 +199,21 @@ validate_columns(
     "glossary_app.csv"
 )
 
+validate_columns(
+    reference_library,
+    c(
+        "reference_id",
+        "citation_key",
+        "citation_aliases",
+        "authors",
+        "year",
+        "title",
+        "hyperlink",
+        "formatted_reference"
+    ),
+    "references.csv"
+)
+
 application_inventory <- repair_text_columns(application_inventory)
 application_categories <- repair_text_columns(application_categories)
 application_error <- repair_text_columns(application_error)
@@ -195,6 +221,7 @@ criteria_core <- repair_text_columns(criteria_core)
 criteria_related <- repair_text_columns(criteria_related)
 criteria_error <- repair_text_columns(criteria_error)
 glossary <- repair_text_columns(glossary)
+reference_library <- repair_text_columns(reference_library)
 
 application_categories <- application_categories %>%
     left_join(

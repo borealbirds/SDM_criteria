@@ -23,10 +23,14 @@ criteria_core <- read_app_csv(data_path("criteria_core.csv"))
 criteria_related <- read_app_csv(data_path("criteria_related.csv"))
 criteria_error <- read_app_csv(data_path("criteria_error.csv"))
 glossary <- read_app_csv(data_path("glossary_app.csv"))
+reference_library <- read_app_csv(data_path("references.csv"))
 
 required_columns(
   application_inventory,
-  c("Application", "Application_category", "Description"),
+  c(
+    "Application", "Application_category", "Description",
+    "Example citation", "Citation URL"
+  ),
   "application_inventory.csv"
 )
 required_columns(
@@ -66,6 +70,59 @@ required_columns(
   "criteria_error.csv"
 )
 required_columns(glossary, c("Term", "Definition", "Some examples"), "glossary_app.csv")
+required_columns(
+  reference_library,
+  c(
+    "reference_id", "citation_key", "citation_aliases", "authors",
+    "year", "title", "hyperlink", "formatted_reference"
+  ),
+  "references.csv"
+)
+
+normalize_citation_key <- function(value) {
+  value <- tolower(value)
+  value <- gsub("\\((1[0-9]{3}|2[0-9]{3})[a-z]?\\)", "\\1", value)
+  value <- gsub("[^[:alnum:]]+", " ", value)
+  trimws(gsub("[[:space:]]+", " ", value))
+}
+
+citation_author_year <- function(value) {
+  pattern <- "^.*?\\b(?:1[0-9]{3}|2[0-9]{3})[a-z]?\\b|^.*?\\bin prep\\b"
+  matched <- regexpr(pattern, value, ignore.case = TRUE, perl = TRUE)
+  ifelse(matched < 0, value, regmatches(value, matched))
+}
+
+split_citations <- function(values) {
+  values <- values[!is.na(values) & trimws(values) != ""]
+  unique(trimws(unlist(strsplit(values, ";", fixed = TRUE))))
+}
+
+reference_aliases <- unique(c(
+  reference_library$citation_key,
+  trimws(unlist(strsplit(
+    reference_library$citation_aliases[
+      !is.na(reference_library$citation_aliases)
+    ],
+    "|",
+    fixed = TRUE
+  )))
+))
+reference_match_keys <- normalize_citation_key(reference_aliases)
+
+used_citations <- unique(c(
+  split_citations(criteria_core$Citations),
+  split_citations(criteria_related$Citations),
+  split_citations(application_inventory[["Example citation"]])
+))
+used_match_keys <- normalize_citation_key(citation_author_year(used_citations))
+unmatched_citations <- used_citations[!(used_match_keys %in% reference_match_keys)]
+if (length(unmatched_citations) > 0) {
+  stop(
+    "Citation(s) do not resolve to references.csv: ",
+    paste(unmatched_citations, collapse = "; "),
+    call. = FALSE
+  )
+}
 
 allowed_ranks <- c("High", "Medium", "Low")
 bad_application_ranks <- setdiff(unique(application_error$Error_effect_rank), allowed_ranks)

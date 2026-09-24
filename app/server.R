@@ -2,6 +2,7 @@
 server <- function(input, output, session) {
     selected_row_data <- reactiveVal(NULL)
     submitted_purpose <- reactiveVal("")
+    submitted_application_citations <- reactiveVal(data.frame())
     applied_filters <- reactiveVal(DEFAULT_FILTERS)
     filters_applied <- reactiveVal(FALSE)
 
@@ -588,6 +589,76 @@ server <- function(input, output, session) {
         trimws(unlist(strsplit(value, ";", fixed = TRUE)))
     }
 
+    normalize_citation_key <- function(value) {
+        value %>%
+            str_to_lower() %>%
+            str_replace_all("\\((1[0-9]{3}|2[0-9]{3})[a-z]?\\)", "\\1") %>%
+            str_replace_all("[^[:alnum:]]+", " ") %>%
+            str_squish()
+    }
+
+    citation_author_year <- function(value) {
+        extracted <- str_extract(
+            value,
+            regex("^.*?\\b(?:1[0-9]{3}|2[0-9]{3})[a-z]?\\b|^.*?\\bin prep\\b", ignore_case = TRUE)
+        )
+        ifelse(is.na(extracted), value, extracted)
+    }
+
+    reference_alias_lookup <- map_dfr(
+        seq_len(nrow(reference_library)),
+        function(i) {
+            aliases <- c(
+                reference_library$citation_key[i],
+                trimws(unlist(strsplit(
+                    reference_library$citation_aliases[i],
+                    "|",
+                    fixed = TRUE
+                )))
+            )
+            data.frame(
+                citation_match_key = normalize_citation_key(aliases),
+                reference_id = reference_library$reference_id[i],
+                stringsAsFactors = FALSE
+            )
+        }
+    ) %>%
+        filter(citation_match_key != "") %>%
+        distinct(citation_match_key, .keep_all = TRUE)
+
+    application_examples <- function(category, application = "") {
+        rows <- application_inventory %>%
+            filter(Application_category == category)
+        if (!is.null(application) && application != "") {
+            rows <- rows %>% filter(Application == application)
+        }
+        examples <- map_dfr(seq_len(nrow(rows)), function(i) {
+            citations <- split_semicolon_values(rows[["Example citation"]][i])
+            urls <- split_semicolon_values(rows[["Citation URL"]][i])
+            if (length(citations) == 0) {
+                return(data.frame())
+            }
+            data.frame(
+                citation_text = citations,
+                source_url = vapply(seq_along(citations), function(j) {
+                    if (j <= length(urls)) urls[j] else ""
+                }, character(1)),
+                source_label = paste0(
+                    "Model application: ",
+                    rows$Application[i]
+                ),
+                stringsAsFactors = FALSE
+            )
+        })
+        if (
+            (is.null(application) || application == "") &&
+                nrow(examples) > 1
+        ) {
+            examples <- examples[sample.int(nrow(examples), 1), , drop = FALSE]
+        }
+        examples
+    }
+
     render_application_examples <- function(app_row) {
         if (!all(c("Example citation", "Citation URL") %in% names(app_row))) {
             return(NULL)
@@ -746,6 +817,10 @@ server <- function(input, output, session) {
             type_select = input$type_select,
             severity_tolerance = input$severity_tolerance,
             certainty_tolerance = input$certainty_tolerance
+        ))
+        submitted_application_citations(application_examples(
+            category_to_apply,
+            input$app_select
         ))
         submitted_purpose(input$user_purpose)
         filters_applied(TRUE)
@@ -1201,6 +1276,189 @@ server <- function(input, output, session) {
             )
     })
 
+    criterion_citation_usage <- function(data, criterion_type) {
+        if (nrow(data) == 0) {
+            return(data.frame())
+        }
+        map_dfr(seq_len(nrow(data)), function(i) {
+            citations <- split_semicolon_values(data$Citations[i])
+            if (length(citations) == 0) {
+                return(data.frame())
+            }
+            data.frame(
+                citation_text = citations,
+                source_url = "",
+                source_label = paste0(
+                    criterion_type,
+                    " ",
+                    data$ID[i],
+                    ": ",
+                    data$Criterion[i]
+                ),
+                stringsAsFactors = FALSE
+            )
+        })
+    }
+
+    first_nonblank <- function(values, fallback = "") {
+        values <- values[!is.na(values) & trimws(values) != ""]
+        if (length(values) == 0) fallback else values[1]
+    }
+
+    selected_citation_usage <- reactive({
+        req(filters_applied())
+        bind_rows(
+            submitted_application_citations(),
+            criterion_citation_usage(
+                selected_core_criteria(),
+                "Core criterion"
+            ),
+            criterion_citation_usage(
+                selected_related_criteria(),
+                "Related special case"
+            )
+        )
+    })
+
+    literature_filter_choices <- reactive({
+        req(filters_applied())
+        core_choices <- selected_core_criteria() %>%
+            transmute(source_label = paste0(
+                "Core criterion ", ID, ": ", Criterion
+            ))
+        related_choices <- selected_related_criteria() %>%
+            transmute(source_label = paste0(
+                "Related special case ", ID, ": ", Criterion
+            ))
+        unique(c(
+            submitted_application_citations()$source_label,
+            core_choices$source_label,
+            related_choices$source_label
+        ))
+    })
+
+    selected_references <- reactive({
+        req(filters_applied())
+        usage <- selected_citation_usage()
+        if (nrow(usage) == 0) {
+            return(data.frame())
+        }
+
+        usage %>%
+            mutate(
+                citation_match_key = normalize_citation_key(
+                    citation_author_year(citation_text)
+                )
+            ) %>%
+            left_join(reference_alias_lookup, by = "citation_match_key") %>%
+            left_join(reference_library, by = "reference_id") %>%
+            mutate(
+                reference_group = if_else(
+                    is.na(reference_id) | reference_id == "",
+                    paste0("unmatched::", citation_match_key),
+                    reference_id
+                )
+            ) %>%
+            group_by(reference_group) %>%
+            summarise(
+                formatted_reference = first_nonblank(
+                    formatted_reference,
+                    first(citation_text)
+                ),
+                hyperlink = first_nonblank(hyperlink, first_nonblank(source_url)),
+                citation_key = first_nonblank(citation_key, first(citation_text)),
+                sort_author = first_nonblank(authors, first(citation_text)),
+                sort_year = first_nonblank(year),
+                source_labels = list(sort(unique(source_label))),
+                cited_by = paste(sort(unique(source_label)), collapse = "; "),
+                matched = any(!is.na(reference_id) & reference_id != ""),
+                .groups = "drop"
+            ) %>%
+            arrange(str_to_lower(sort_author), sort_year, citation_key)
+    })
+
+    displayed_references <- reactive({
+        references <- selected_references()
+        selected_source <- input$literature_source_filter
+        if (
+            is.null(selected_source) ||
+                selected_source == "" ||
+                !(selected_source %in% literature_filter_choices()) ||
+                nrow(references) == 0
+        ) {
+            return(references)
+        }
+        references %>%
+            filter(vapply(
+                source_labels,
+                function(labels) selected_source %in% labels,
+                logical(1)
+            ))
+    })
+
+    output$literature_cited_tab <- renderUI({
+        if (!filters_applied()) {
+            return(filter_prompt_ui())
+        }
+        choices <- literature_filter_choices()
+        tagList(
+            div(class = "section-title", "Literature Cited"),
+            div(
+                class = "profile-box",
+                selectInput(
+                    "literature_source_filter",
+                    "Filter references by application or criterion:",
+                    choices = c(
+                        "All selected applications and criteria" = "",
+                        setNames(choices, choices)
+                    ),
+                    selected = if (
+                        !is.null(input$literature_source_filter) &&
+                            input$literature_source_filter %in% choices
+                    ) input$literature_source_filter else ""
+                ),
+                uiOutput("literature_reference_list")
+            )
+        )
+    })
+
+    output$literature_reference_list <- renderUI({
+        req(filters_applied())
+        references <- displayed_references()
+        if (nrow(references) == 0) {
+            return(div(
+                class = "empty-state",
+                "No citations are associated with this application or criterion."
+            ))
+        }
+        tags$ol(
+            class = "literature-list",
+            lapply(seq_len(nrow(references)), function(i) {
+                reference <- references[i, ]
+                tags$li(
+                    if (reference$hyperlink != "") {
+                        tags$a(
+                            href = reference$hyperlink,
+                            target = "_blank",
+                            plain_display_text(
+                                reference$formatted_reference
+                            )
+                        )
+                    } else {
+                        plain_display_text(
+                            reference$formatted_reference
+                        )
+                    },
+                    div(
+                        class = "citation-provenance",
+                        strong("Cited by: "),
+                        plain_display_text(reference$cited_by)
+                    )
+                )
+            })
+        )
+    })
+
     output$report_criteria_table <- renderDT({
         report_df <- report_table_data()
         if ("Criterion_type" %in% names(report_df)) {
@@ -1389,6 +1647,7 @@ server <- function(input, output, session) {
             core_report <- core_report_data()
             related_report <- related_report_data()
             relationship_links <- selected_core_related_links()
+            literature <- selected_references()
             active <- active_error_types()
             filters <- current_filters()
             app_text <- if (
@@ -1611,6 +1870,41 @@ server <- function(input, output, session) {
                             )
                     }
                     doc <- doc %>% body_add_par("", style = "Normal")
+                }
+            }
+
+            doc <- doc %>%
+                body_add_par("4. Literature Cited", style = "heading 2")
+
+            if (nrow(literature) == 0) {
+                doc <- doc %>% body_add_par(
+                    "No citations are associated with the selected application and criteria.",
+                    style = "Normal"
+                )
+            } else {
+                for (i in seq_len(nrow(literature))) {
+                    reference <- literature[i, ]
+                    if (reference$hyperlink != "") {
+                        doc <- doc %>% body_add_fpar(fpar(
+                            ftext(reference$formatted_reference),
+                            ftext(" "),
+                            hyperlink_ftext(
+                                "View source",
+                                href = reference$hyperlink
+                            )
+                        ))
+                    } else {
+                        doc <- doc %>% body_add_par(
+                            reference$formatted_reference,
+                            style = "Normal"
+                        )
+                    }
+                    doc <- doc %>%
+                        body_add_par(
+                            paste("Cited by:", reference$cited_by),
+                            style = "Normal"
+                        ) %>%
+                        body_add_par("", style = "Normal")
                 }
             }
 

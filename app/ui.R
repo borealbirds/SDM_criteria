@@ -39,6 +39,9 @@ ui <- fluidPage(
       .relationship-label { margin-left: 6px; color: #66737b; font-size: 0.76em; }
       .details-box { height: 85vh; overflow-y: auto; background-color: #fcfcfc; border: 1px solid #ddd; border-top: 5px solid #18bc9c; padding: 15px; }
       .empty-state { padding: 16px; border: 1px dashed #bbb; border-radius: 8px; color: #666; background-color: #fafafa; }
+      .literature-list { padding-left: 24px; }
+      .literature-list li { margin-bottom: 14px; padding-left: 4px; }
+      .citation-provenance { margin-top: 3px; color: #66737b; font-size: 0.85em; }
       .criteria-count { margin-bottom: 12px; color: #2c3e50; font-weight: 600; }
       .risk-note { font-size: 0.85em; color: #555; margin-top: -4px; margin-bottom: 8px; }
       .report-actions { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -167,6 +170,11 @@ ui <- fluidPage(
                     "Generate a Report",
                     br(),
                     uiOutput("generate_report_tab")
+                ),
+                tabPanel(
+                    "Literature Cited",
+                    br(),
+                    uiOutput("literature_cited_tab")
                 ),
                 tabPanel(
                     "Glossary",
