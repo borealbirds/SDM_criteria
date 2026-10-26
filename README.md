@@ -65,13 +65,17 @@ install.packages(c(
     "bslib",
     "dplyr",
     "DT",
+    "ggalluvial",
+    "ggplot2",
     "officer",
     "plotly",
     "purrr",
     "shiny",
-    "stringr"
+    "stringr",
+    "tidyr"
 ))
 ```
+
 
 ## Running the App
 
