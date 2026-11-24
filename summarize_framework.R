@@ -494,9 +494,9 @@ print(criteria_return_range)
 
 # 1. Prepare all application-category and tolerance outcomes ----
 severity_labels <- c(
-  "High" = "Error severity tolerance\nCorrectness",
-  "Medium" = "Error severity tolerance\nQuality",
-  "Low" = "Error severity tolerance\nEfficiency"
+  "High" = "Correctness",
+  "Medium" = "Quality",
+  "Low" = "Efficiency"
 )
 
 certainty_labels <- c(
@@ -506,8 +506,8 @@ certainty_labels <- c(
 )
 
 model_type_labels <- c(
-  "Prediction" = "Model type\nPrediction",
-  "Projection" = "Model type\nProjection"
+  "Prediction" = "Prediction",
+  "Projection" = "Projection"
 )
 
 wrap_category <- function(x, width = 34) {
@@ -570,7 +570,7 @@ framework_outcomes_figure <- ggplot(
       )
     ),
     lineheight = 0.9,
-    size = 3.1
+    size = 3.6
   ) +
   facet_grid(
     rows = vars(Model_type),
@@ -598,8 +598,9 @@ framework_outcomes_figure <- ggplot(
     values = c("TRUE" = "white", "FALSE" = "#222222"),
     guide = "none"
   ) +
+  coord_fixed(ratio = 0.75) +
   labs(
-    title = NULL,
+    title = "Error severity tolerance",
     subtitle = NULL,
     x = "Error certainty tolerance",
     y = NULL,
@@ -608,17 +609,56 @@ framework_outcomes_figure <- ggplot(
   theme_minimal(base_size = 11) +
   theme(
     panel.grid = element_blank(),
-    strip.text = element_text(face = "bold", size = 12),
+    plot.title = element_text(
+      face = "bold",
+      size = 13,
+      hjust = 0.5,
+      margin = margin(b = 6)
+    ),
+    plot.title.position = "panel",
+    strip.text.x = element_text(face = "bold", size = 12),
+    strip.text.y.right = element_text(face = "bold", size = 11),
     strip.background = element_rect(fill = "#F3CF93", colour = NA),
-    axis.text.x = element_text(size = 8.5),
-    axis.text.y = element_text(size = 9, lineheight = 0.9),
-    axis.title.x = element_text(face = "bold", margin = margin(t = 10)),
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10, lineheight = 0.9),
+    axis.title.x = element_text(
+      face = "bold",
+      size = 12,
+      margin = margin(t = 10)
+    ),
     legend.position = "bottom",
-    legend.title = element_text(face = "bold", size = 11),
-    legend.text = element_text(size = 10),
-    panel.spacing.y = unit(0.8, "lines"),
-    plot.margin = margin(10, 15, 10, 10)
-  )
+    legend.title = element_text(face = "bold", size = 11.5),
+    legend.text = element_text(size = 10.5),
+    panel.spacing.x = unit(0.35, "lines"),
+    panel.spacing.y = unit(0.7, "lines"),
+    plot.margin = margin(10, 10, 10, 10)
+)
+
+# Place one shared title beside both row facets in a dedicated layout column.
+model_type_title <- grid::textGrob(
+  "Model type",
+  rot = -90,
+  gp = grid::gpar(fontface = "bold", fontsize = 13)
+)
+framework_outcomes_grob <- gtable::gtable(
+  widths = grid::unit.c(
+    grid::unit(1, "null"),
+    grid::grobWidth(model_type_title) + grid::unit(0.5, "lines")
+  ),
+  heights = grid::unit(1, "null")
+)
+framework_outcomes_grob <- gtable::gtable_add_grob(
+  framework_outcomes_grob,
+  ggplotGrob(framework_outcomes_figure),
+  t = 1,
+  l = 1
+)
+framework_outcomes_grob <- gtable::gtable_add_grob(
+  framework_outcomes_grob,
+  model_type_title,
+  t = 1,
+  l = 2
+)
 
 
 # 3. Save the framework-results figure ----
@@ -631,8 +671,8 @@ framework_outcomes_path <- file.path(
 
 ggsave(
   filename = framework_outcomes_path,
-  plot = framework_outcomes_figure,
-  width = 13,
+  plot = framework_outcomes_grob,
+  width = 11,
   height = 10,
   units = "in",
   dpi = 300,
