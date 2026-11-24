@@ -22,6 +22,8 @@ The app applies the selections only when the user clicks `Filter Criteria`.
 - `app/data/` contains the application, criteria, glossary, and landing-page
   source files.
 - `validate_app_data.R` performs more extensive standalone data validation.
+- `summarize_framework.R` summarizes the full framework and generates the
+  framework-outcomes heatmap and case-study Sankey figures.
 
 The criteria inventory is divided into two files:
 
@@ -51,9 +53,10 @@ The `app/data` folder contains:
 - `references - zotero.csv`: the Zotero bibliography export used as the primary
   metadata source for cited literature.
 - `references.csv`: a Zotero-first normalized bibliography with clickable review
-  links, app-use context, metadata provenance, and match status. Probable citation
-  variants and unresolved citations remain flagged for review. It is not yet
-  displayed by the app.
+  links, app-use context, metadata provenance, and match status. The app uses it
+  to populate the `Literature Cited` tab and the literature section of DOCX
+  reports. Probable citation variants and unresolved citations remain flagged
+  for review.
 - `glossary_app.csv`: glossary terms, definitions, and examples.
 
 ## Requirements
@@ -65,11 +68,14 @@ install.packages(c(
     "bslib",
     "dplyr",
     "DT",
+    "ggalluvial",
+    "ggplot2",
     "officer",
     "plotly",
     "purrr",
     "shiny",
-    "stringr"
+    "stringr",
+    "tidyr"
 ))
 ```
 
@@ -146,6 +152,12 @@ defined error certainty and therefore are not counted as separately filtered
 criteria.
 
 The `Generate a Report` tab provides report metadata and DOCX and CSV exports.
+
+The `Literature Cited` tab lists references associated with the selected model
+application, core criteria, and related special cases. References can be
+filtered by the application or criterion that cites them, and available links
+open the source in a new browser tab.
+
 The `Glossary` tab displays searchable definitions and examples.
 
 ## Filtering Logic
@@ -197,7 +209,8 @@ Related rows leave certainty fields blank and include:
 Each related criterion appears once in the consolidated CSV, even when it is
 associated with multiple selected core criteria. The DOCX is hierarchical:
 related special cases are listed beneath each associated selected core
-criterion.
+criterion. The DOCX also includes the literature cited by the selected
+application and criteria.
 
 ## Data Dictionary
 
