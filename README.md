@@ -15,10 +15,6 @@ The app applies the selections only when the user clicks `Filter Criteria`.
 
 ## Project Structure
 
-The `docs` folder contains the static Shinylive version of the app that can be 
-served as a standalone web application locally (see the "Static Shinylive" 
-section below) and is hosted through GitHub Pages.
-
 - `app/global.R` loads and validates app data and defines shared constants.
 - `app/ui.R` defines the sidebar, tabs, styling, and client-side interactions.
 - `app/server.R` implements filtering, criterion relationships, displays, and
@@ -255,22 +251,6 @@ at runtime as a guardrail, but correcting the source CSV is preferred.
 
 Multiple example citations or URLs in
 `application_inventory.csv` may be separated with semicolons.
-
-## Static Shinylive
-
-The app can be run as a static Shinylive application. Ensure that all required CSV files are present and correctly formatted.
-
-Updating static files in the `docs/app` directory can be done with the following commands:
-
-```R
-shinylive::export("app", "docs/app")
-```
-
-Start local server to check the static app in a web browser:
-
-```R
-httpuv::runStaticServer("docs/app")
-```
 
 ## License
 
